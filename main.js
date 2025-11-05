@@ -313,7 +313,7 @@ var rebaLib = {
       // *** You must add this element to your page, e.g.:
       // <div data-ms-member="slug" style="display:none;"></div>
       const check = setInterval(function () {
-        const $slugEl = $("[data-ms-member='slug']");
+        const $slugEl = $("[data-ms-member='wf-users-slug']");
         
         if ($slugEl.length > 0 && $slugEl.text().trim() !== "") {
           clearInterval(check);
