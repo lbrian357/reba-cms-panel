@@ -1,38 +1,50 @@
 const PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba";
 const SITE_ID = "5cef42a5323d3a463877056f";
 const USERS_COLLECTION_ID = "6782edb1ca16eb93e3bf40b5";
+const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
 
 // Main library object
 var rebaLib = {
   // --- Profile Page Logic ---
   profilePage: {
     quillInstance: null, // To store the editor instance
+    allCategories: [], // To store all fetched categories
     init: function () {
       console.log("Profile page script loaded.");
-      // 1. Get the current user's slug from Memberstack
-      rebaLib.utils.getMemberSlug(function (slug) {
-        if (!slug) {
-          rebaLib.utils.showNotification("Could not find Memberstack user slug. Please ensure [data-ms-member='wf-users-slug'] exists and is populated.", true);
-          return;
-        }
-        
-        // 2. Fetch profile data from Webflow
-        rebaLib.api.fetchUserProfile(slug);
-
-        // 3. Bind the save button
-        $("#save-user").on("click", function (e) {
-          e.preventDefault();
-          rebaLib.profilePage.handleSaveProfile();
-        });
-
-        // 4. Bind the profile picture click (for upload)
-        $("#profile-pic-preview").on("click", function() {
-          rebaLib.profilePage.handleProfilePicUpload();
-        });
-      });
       
       // Inject required 3rd-party scripts
       rebaLib.utils.injectDependencies();
+
+      // 1. Fetch all categories first
+      rebaLib.api.fetchAllUserCategories(function(categories) {
+          if (!categories) {
+              rebaLib.utils.showNotification("Could not load user categories.", true);
+              return;
+          }
+          rebaLib.profilePage.allCategories = categories;
+
+          // 2. Get the current user's slug from Memberstack
+          rebaLib.utils.getMemberSlug(function (slug) {
+            if (!slug) {
+              rebaLib.utils.showNotification("Could not find Memberstack user slug. Please ensure [data-ms-member='wf-users-slug'] exists and is populated.", true);
+              return;
+            }
+            
+            // 3. Fetch profile data from Webflow
+            rebaLib.api.fetchUserProfile(slug);
+    
+            // 4. Bind the save button
+            $("#save-user").on("click", function (e) {
+              e.preventDefault();
+              rebaLib.profilePage.handleSaveProfile();
+            });
+    
+            // 5. Bind the profile picture click (for upload)
+            $("#profile-pic-preview").on("click", function() {
+              rebaLib.profilePage.handleProfilePicUpload();
+            });
+          });
+      });
     },
 
     /**
@@ -87,9 +99,29 @@ var rebaLib = {
           .removeAttr("srcset");
       }
       
-      // TODO: Populate multi-select 'User-Categories'
-      // This requires fetching the categories collection and matching IDs.
-      // Example: $("#user-categories").val(fieldData["categories"] || []);
+      // --- Populate multi-select 'User-Categories' ---
+      const $categoriesSelect = $("#user-categories");
+      $categoriesSelect.empty(); // Clear any existing options
+      
+      // Add all categories as options
+      rebaLib.profilePage.allCategories.forEach(function (category) {
+        $categoriesSelect.append(
+          $("<option>", {
+            value: category.id,
+            text: category.fieldData.name || "Unnamed Category",
+          })
+        );
+      });
+      
+      // Set the selected values
+      $categoriesSelect.val(fieldData["categories"] || []);
+
+      // Initialize the multiselect plugin
+      rebaLib.utils.waitForMultiSelect(function() {
+        $categoriesSelect.multiselect({
+            maxHeight: 200,
+        });
+      });
     },
 
     /**
@@ -133,12 +165,9 @@ var rebaLib = {
           "url-youtube": $("#user-url-youtube").val(),
           "url-linkedin": $("#user-url-linkedin").val(),
           "url-tiktok": $("#user-url-tiktok").val(),
-          // "categories": $("#user-categories").val() || [], // Example for multi-select
+          "categories": $("#user-categories").val() || [], // Get selected category IDs
         },
       };
-
-      // DEBUG: Log the data object just before sending it to the API
-      console.log("handleSaveProfile: Data object being saved:", dataToSave);
 
       // --- Handle Image Save ---
       // Get the image URL from the preview. This assumes it was
@@ -174,62 +203,131 @@ var rebaLib = {
      * Handles clicking the profile picture to upload a new one.
      */
     handleProfilePicUpload: function() {
-        // This function replaces the complex upload logic from your old script
-        // with a simpler, two-step process:
-        // 1. Upload the image using Webflow's native asset uploader.
-        // 2. Save the *URL* of the uploaded image to the user item.
+      // This function replaces the complex upload logic from your old script
+      // with a simpler, two-step process:
+      // 1. Upload the image using Webflow's native asset uploader.
+      // 2. Save the *URL* of the uploaded image to the user item.
 
-        const $preview = $("#profile-pic-preview");
+      const $preview = $("#profile-pic-preview");
 
-        // Create a temporary file input
-        const $input = $('<input type="file" accept="image/*" style="display: none;">');
-        $("body").append($input);
+      // Create a temporary file input
+      const $input = $('<input type="file" accept="image/*" style="display: none;">');
+      $("body").append($input);
 
-        $input.on("change", function(e) {
-            const file = e.target.files[0];
-            if (!file) {
-                $input.remove();
-                return;
-            }
+      $input.on("change", function(e) {
+          const file = e.target.files[0];
+          if (!file) {
+              $input.remove();
+              return;
+          }
 
-            // Show an optimistic local preview
-            const reader = new FileReader();
-            reader.onload = function(event) {
-                $preview.attr("src", event.target.result);
-            }
-            reader.readAsDataURL(file);
+          // Show an optimistic local preview
+          const reader = new FileReader();
+          reader.onload = function(event) {
+              $preview.attr("src", event.target.result);
+          }
+          reader.readAsDataURL(file);
 
-            rebaLib.utils.showNotification("Uploading image...", false);
+          rebaLib.utils.showNotification("Uploading image...", false);
 
-            // Upload the file to Webflow Assets
-            rebaLib.api.uploadFile(file, 
-                function(asset) {
-                    // Success!
-                    rebaLib.utils.showNotification("Image uploaded. Click 'Save' to apply.", false);
-                    
-                    // Update the preview with the real Webflow URL
-                    $preview.attr("src", asset.url);
-                    
-                    // Store the new URL to be saved with the profile
-                    $preview.data("new-image-url", asset.url);
-                },
-                function(error) {
-                    // Error
-                    rebaLib.utils.showNotification("Image upload failed.", true);
-                    console.error("Upload error:", error);
-                }
-            );
+          // Upload the file to Webflow Assets
+          rebaLib.api.uploadFile(file, 
+              function(asset) {
+                  // Success!
+                  rebaLib.utils.showNotification("Image uploaded. Click 'Save' to apply.", false);
+                  
+                  // Update the preview with the real Webflow URL
+                  $preview.attr("src", asset.url);
+                  
+                  // Store the new URL to be saved with the profile
+                  $preview.data("new-image-url", asset.url);
+              },
+              function(error) {
+                  // Error
+                  rebaLib.utils.showNotification("Image upload failed.", true);
+                  console.error("Upload error:", error);
+              }
+          );
 
-            // Clean up the temporary input
-            $input.remove();
-        });
+          // Clean up the temporary input
+          $input.remove();
+      });
 
-        $input.click();
+      $input.click();
     }
   },
 
   // --- API Calls ---
   api: {
+    /**
+     * Fetches paginated data from a Webflow collection.
+     * @param {string} url - The base URL to fetch from.
+     * @param {function} processData - A function to run on each batch of items.
+     * @param {number} offset - The starting offset (default 0).
+     * @param {function} callback - A function to run when all pages are fetched.
+     */
+    fetchAllPaginated: function (url, processData, offset = 0, callback = null) {
+      $.ajax({
+        url: `${url}&offset=${offset}`,
+        method: "GET",
+        success: function (response) {
+          const items = response.items || [];
+          const pagination = response.pagination;
+          
+          // Process this batch of data
+          processData(items);
+
+          if (pagination && (offset + pagination.limit < pagination.total)) {
+            // There are more pages, fetch the next one
+            rebaLib.api.fetchAllPaginated(url, processData, offset + pagination.limit, callback);
+          } else {
+            // All pages fetched, invoke the final callback
+            if (typeof callback === "function") {
+              callback();
+            }
+          }
+        },
+        error: function (error) {
+          console.error("Error fetching paginated data:", error);
+          // Invoke the callback even on error
+          if (typeof callback === "function") {
+            callback();
+          }
+        },
+      });
+    },
+
+    /**
+     * Fetches all user categories from Webflow.
+     * @param {function} onComplete - Callback function with all categories.
+     */
+    fetchAllUserCategories: function(onComplete) {
+        const allCategories = [];
+        const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USER_CATEGORIES_COLLECTION_ID}/items/live?limit=100`; // limit=100 is max
+        
+        rebaLib.api.fetchAllPaginated(
+            url,
+            (items) => {
+                // Add items from this page
+                allCategories.push(...items);
+            },
+            0,
+            () => {
+                // All pages are loaded
+                // Sort categories alphabetically by name
+                allCategories.sort((a, b) => {
+                    const nameA = (a.fieldData.name || "").toLowerCase();
+                    const nameB = (b.fieldData.name || "").toLowerCase();
+                    return nameA.localeCompare(nameB);
+                });
+                
+                if (onComplete) {
+                    onComplete(allCategories);
+                }
+            }
+        );
+    },
+
     /**
      * Fetches a single user profile from Webflow using their slug.
      * @param {string} slug - The user's Memberstack slug.
@@ -436,6 +534,16 @@ var rebaLib = {
         $("head").append(quillCssLink);
         $("head").append(quillJsScript);
       }
+      
+      // @nobleclem/jquery-multiselect
+      if (typeof $.fn.multiselect === 'undefined') {
+        const scriptTagForMultiselect =
+          '<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>';
+        const cssLinkForMultiselect =
+          '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">';
+        $("head").append(scriptTagForMultiselect);
+        $("head").append(cssLinkForMultiselect);
+      }
     },
     
     /**
@@ -453,6 +561,26 @@ var rebaLib = {
             } else if (attempts > maxAttempts) {
                 clearInterval(check);
                 console.error("Quill.js failed to load.");
+            }
+            attempts++;
+        }, 100);
+    },
+    
+    /**
+     * Waits for jQuery.multiselect to be loaded on the page.
+     * @param {function} callback - Function to run once the plugin is available.
+     */
+    waitForMultiSelect: function(callback) {
+        let attempts = 0;
+        const maxAttempts = 100; // Wait 10 seconds
+        
+        const check = setInterval(function () {
+            if (typeof $.fn.multiselect !== 'undefined') {
+                clearInterval(check);
+                callback();
+            } else if (attempts > maxAttempts) {
+                clearInterval(check);
+                console.error("jquery.multiselect.js failed to load.");
             }
             attempts++;
         }, 100);
