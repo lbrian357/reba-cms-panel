@@ -6,6 +6,7 @@ const USERS_COLLECTION_ID = "6782edb1ca16eb93e3bf40b5";
 var rebaLib = {
   // --- Profile Page Logic ---
   profilePage: {
+    quillInstance: null, // To store the editor instance
     init: function () {
       console.log("Profile page script loaded.");
       // 1. Get the current user's slug from Memberstack
@@ -29,6 +30,9 @@ var rebaLib = {
           rebaLib.profilePage.handleProfilePicUpload();
         });
       });
+      
+      // Inject required 3rd-party scripts
+      rebaLib.utils.injectDependencies();
     },
 
     /**
@@ -58,7 +62,15 @@ var rebaLib = {
       $("#user-website").val(fieldData["website"] || "");
       $("#user-address").val(fieldData["address"] || "");
       $("#user-city").val(fieldData["city-state-zip"] || "");
-      $("#user-bio").val(fieldData["bio"] || "");
+      
+      // Wait for Quill to be loaded, then initialize it
+      rebaLib.utils.waitForQuill(function() {
+          rebaLib.profilePage.quillInstance = rebaLib.utils.initRichTextEditor(
+              "user-bio", 
+              "Share partner bio or info here...", 
+              fieldData["bio"] || ""
+          );
+      });
 
       // --- Populate Social Links ---
       $("#user-url-facebook").val(fieldData["url-facebook"] || "");
@@ -109,7 +121,12 @@ var rebaLib = {
           "website": $("#user-website").val(),
           "address": $("#user-address").val(),
           "city-state-zip": $("#user-city").val(),
-          "bio": $("#user-bio").val(),
+          
+          // Get content from Quill instance
+          "bio": rebaLib.profilePage.quillInstance 
+                 ? rebaLib.utils.cleanQuillHTML(rebaLib.profilePage.quillInstance.root.innerHTML) 
+                 : $("#user-bio").val(), // Fallback just in case
+
           "url-facebook": $("#user-url-facebook").val(),
           "url-instagram": $("#user-url-instagram").val(),
           "url-x": $("#user-url-x").val(),
@@ -119,6 +136,9 @@ var rebaLib = {
           // "categories": $("#user-categories").val() || [], // Example for multi-select
         },
       };
+
+      // DEBUG: Log the data object just before sending it to the API
+      console.log("handleSaveProfile: Data object being saved:", dataToSave);
 
       // --- Handle Image Save ---
       // Get the image URL from the preview. This assumes it was
@@ -261,38 +281,78 @@ var rebaLib = {
      * @param {function} onError - Callback on error.
      */
     uploadFile: function(file, onSuccess, onError) {
-        // This is a simplified uploader that sends the file directly.
-        // Webflow's direct asset API is not public, so we proxy
-        // a request to the /v2/sites/{site_id}/assets/upload endpoint.
-        
-        // This simplified uploader doesn't use MD5 hashing and multipart
-        // S3 uploads like your old script. It sends the file directly.
-        // This may fail for large files (> 4MB).
+      // This is the correct 2-step upload process from your old main.js
+      
+      const generateMD5Hash = (file) => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsBinaryString(file);
+          reader.onload = function () {
+            const md5Hash = SparkMD5.hashBinary(reader.result);
+            resolve(md5Hash);
+          };
+          reader.onerror = (error) => reject(error);
+        });
+      };
 
-        const formData = new FormData();
-        formData.append("file", file);
-        
-        const url = `${PROXY_URL}/https://api.webflow.com/v2/sites/${SITE_ID}/assets/upload`;
-
-        $.ajax({
-            url: url,
+      generateMD5Hash(file)
+        .then((md5Hash) => {
+          // Step 1: Tell Webflow about the file
+          $.ajax({
+            url: `${PROXY_URL}/https://api.webflow.com/v2/sites/${SITE_ID}/assets`,
             method: "POST",
-            data: formData,
-            processData: false, // Important!
-            contentType: false, // Important!
-            success: function(response) {
-                // The response from this endpoint should be the asset object
-                onSuccess(response);
+            headers: {
+              "Content-Type": "application/json",
             },
-            error: function(error) {
-                console.error("Direct upload error:", error);
-                // Fallback attempt for large files (not fully implemented)
-                if (error.status === 400) {
-                   onError("File may be too large. Direct S3 upload not implemented in this simple script.");
-                } else {
-                   onError(error);
-                }
-            }
+            data: JSON.stringify({
+              fileHash: md5Hash,
+              fileName: file.name,
+              contentType: file.type,
+              // Using the parentFolder ID from your old script.
+              // This is likely the "Backend Uploads" folder.
+              parentFolder: "69164778bebb5bda1bf45e85", 
+            }),
+            success: function (response) {
+              // Step 2: Upload the file to the S3 URL Webflow provided
+              const formData = new FormData();
+
+              // Add all the upload details from Webflow to the form
+              Object.keys(response.uploadDetails).forEach((key) => {
+                formData.append(key, response.uploadDetails[key]);
+              });
+
+              // Append the actual file
+              formData.append("file", file);
+
+              // Upload to S3
+              $.ajax({
+                url: response.uploadUrl,
+                method: "POST",
+                data: formData,
+                processData: false,
+                contentType: false,
+                success: function () {
+                  // Step 3: Success! Return the asset details.
+                  onSuccess({
+                    id: response.id,
+                    url: response.assetUrl || response.hostedUrl,
+                  });
+                },
+                error: function (error) {
+                  console.error("Error uploading to S3:", error);
+                  if (onError) onError(error);
+                },
+              });
+            },
+            error: function (error) {
+              console.error("Error getting upload details:", error);
+              if (onError) onError(error);
+            },
+          });
+        })
+        .catch((error) => {
+          console.error("Error generating file hash:", error);
+          if (onError) onError(error);
         });
     }
   },
@@ -358,6 +418,94 @@ var rebaLib = {
         $(this).remove();
       });
     },
+    
+    /**
+     * Injects 3rd-party scripts required by the library.
+     */
+    injectDependencies: function () {
+      // SparkMD5 is required for the new upload function
+      if (typeof SparkMD5 === 'undefined') {
+        const scriptTagForSparkMD5 = '<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>';
+        $("head").append(scriptTagForSparkMD5);
+      }
+      
+      // Quill Rich Text Editor
+      if (typeof Quill === 'undefined') {
+        const quillCssLink = '<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">';
+        const quillJsScript = '<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>';
+        $("head").append(quillCssLink);
+        $("head").append(quillJsScript);
+      }
+    },
+    
+    /**
+     * Waits for Quill to be loaded on the page.
+     * @param {function} callback - Function to run once Quill is available.
+     */
+    waitForQuill: function(callback) {
+        let attempts = 0;
+        const maxAttempts = 100; // Wait 10 seconds
+        
+        const check = setInterval(function () {
+            if (typeof Quill !== 'undefined') {
+                clearInterval(check);
+                callback();
+            } else if (attempts > maxAttempts) {
+                clearInterval(check);
+                console.error("Quill.js failed to load.");
+            }
+            attempts++;
+        }, 100);
+    },
+    
+    /**
+     * Initializes a Quill editor on a specific element.
+     * @param {string} editorId - The ID of the textarea to replace.
+     * @param {string} placeholder - The placeholder text.
+     * @param {string} content - The initial HTML content.
+     * @returns {Quill} The Quill instance.
+     */
+    initRichTextEditor: function (editorId, placeholder, content) {
+        // This is the corrected function, modeled on your main.js
+        
+        // Find the element to replace
+        const $editor = $(`#${editorId}`);
+        if (!$editor.length) return null;
+
+        // Create the new div with the same ID and existing content
+        const $editorDiv = $(`<div id="${editorId}">${content}</div>`);
+        
+        // Copy classes from the old textarea to the new div
+        $editorDiv.attr('class', $editor.attr('class'));
+        
+        // Replace the textarea with the new div
+        $editor.replaceWith($editorDiv);
+
+        const quill = new Quill(`#${editorId}`, {
+            modules: {
+              toolbar: [["bold", "italic", "underline"]], // Simple toolbar
+            },
+            placeholder: placeholder,
+            theme: "snow",
+        });
+        
+        return quill;
+    },
+    
+    /**
+     * Cleans Quill's HTML output for saving to Webflow.
+     * @param {string} innerHTML - The innerHTML from quill.root.
+     * @returns {string} Cleaned HTML.
+     */
+    cleanQuillHTML: function (innerHTML) {
+      // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
+      // Webflow rich text fields often prefer just <p> tags.
+      if (innerHTML === "<p><br></p>") {
+        return "";
+      }
+      // Remove the cursor span elements from Quill editor innerHTML
+      return innerHTML.replace(/<span class="ql-cursor">.*?<\/span>/g, "");
+    }
   },
 };
 
