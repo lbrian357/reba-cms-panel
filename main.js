@@ -11,7 +11,7 @@ var rebaLib = {
       // 1. Get the current user's slug from Memberstack
       rebaLib.utils.getMemberSlug(function (slug) {
         if (!slug) {
-          rebaLib.utils.showNotification("Could not find Memberstack user slug. Please ensure [data-ms-member='slug'] exists and is populated.", true);
+          rebaLib.utils.showNotification("Could not find Memberstack user slug. Please ensure [data-ms-member='wf-users-slug'] exists and is populated.", true);
           return;
         }
         
@@ -47,39 +47,37 @@ var rebaLib = {
       $("#wf-form-Edit-User-Form").data("webflow-item-id", user.id);
       
       // --- Populate Text Fields ---
-      // Note: Webflow field names are case-sensitive and use-kebab-case.
-      // These keys are guesses based on your form's input IDs.
-      // You may need to adjust them to match your Webflow collection.
+      // These keys are now matched to your JSON response
       $("#user-first-name").val(fieldData["first-name"] || "");
       $("#user-last-name").val(fieldData["last-name"] || "");
       $("#user-company").val(fieldData["company"] || "");
       $("#user-title").val(fieldData["title"] || "");
-      $("#user-license-number").val(fieldData["user-license-number"] || "");
+      $("#user-license-number").val(fieldData["license-number"] || "");
       $("#user-phone").val(fieldData["phone"] || "");
       $("#user-email").val(fieldData["email"] || "");
-      $("#user-website").val(fieldData["user-website"] || "");
-      $("#user-address").val(fieldData["user-address"] || "");
-      $("#user-city").val(fieldData["user-city"] || "");
-      $("#user-bio").val(fieldData["user-bio"] || "");
+      $("#user-website").val(fieldData["website"] || "");
+      $("#user-address").val(fieldData["address"] || "");
+      $("#user-city").val(fieldData["city-state-zip"] || "");
+      $("#user-bio").val(fieldData["bio"] || "");
 
       // --- Populate Social Links ---
-      $("#user-url-facebook").val(fieldData["user-url-facebook"] || "");
-      $("#user-url-instagram").val(fieldData["user-url-instagram"] || "");
-      $("#user-url-x").val(fieldData["user-url-x"] || "");
-      $("#user-url-youtube").val(fieldData["user-url-youtube"] || "");
-      $("#user-url-linkedin").val(fieldData["user-url-linkedin"] || "");
-      $("#user-url-tiktok").val(fieldData["user-url-tiktok"] || "");
+      $("#user-url-facebook").val(fieldData["url-facebook"] || "");
+      $("#user-url-instagram").val(fieldData["url-instagram"] || "");
+      $("#user-url-x").val(fieldData["url-x"] || "");
+      $("#user-url-youtube").val(fieldData["url-youtube"] || "");
+      $("#user-url-linkedin").val(fieldData["url-linkedin"] || "");
+      $("#user-url-tiktok").val(fieldData["url-tiktok"] || "");
 
       // --- Populate Image ---
-      if (fieldData["profile-picture"] && fieldData["profile-picture"].url) {
+      if (fieldData["profile-pic"] && fieldData["profile-pic"].url) {
         $("#profile-pic-preview")
-          .attr("src", fieldData["profile-picture"].url)
+          .attr("src", fieldData["profile-pic"].url)
           .removeAttr("srcset");
       }
       
       // TODO: Populate multi-select 'User-Categories'
       // This requires fetching the categories collection and matching IDs.
-      // Example: $("#user-categories").val(fieldData["user-categories"] || []);
+      // Example: $("#user-categories").val(fieldData["categories"] || []);
     },
 
     /**
@@ -98,27 +96,27 @@ var rebaLib = {
       $button.val("Saving...").prop("disabled", true);
 
       // --- Collect all data into a Webflow-ready object ---
-      // Note: Adjust the keys here to match your Webflow collection schema.
+      // These keys are now matched to your JSON response
       const dataToSave = {
         fieldData: {
           "first-name": $("#user-first-name").val(),
           "last-name": $("#user-last-name").val(),
           "company": $("#user-company").val(),
           "title": $("#user-title").val(),
-          "user-license-number": $("#user-license-number").val(),
+          "license-number": $("#user-license-number").val(),
           "phone": $("#user-phone").val(),
           "email": $("#user-email").val(),
-          "user-website": $("#user-website").val(),
-          "user-address": $("#user-address").val(),
-          "user-city": $("#user-city").val(),
-          "user-bio": $("#user-bio").val(),
-          "user-url-facebook": $("#user-url-facebook").val(),
-          "user-url-instagram": $("#user-url-instagram").val(),
-          "user-url-x": $("#user-url-x").val(),
-          "user-url-youtube": $("#user-url-youtube").val(),
-          "user-url-linkedin": $("#user-url-linkedin").val(),
-          "user-url-tiktok": $("#user-url-tiktok").val(),
-          // "user-categories": $("#user-categories").val() || [], // Example for multi-select
+          "website": $("#user-website").val(),
+          "address": $("#user-address").val(),
+          "city-state-zip": $("#user-city").val(),
+          "bio": $("#user-bio").val(),
+          "url-facebook": $("#user-url-facebook").val(),
+          "url-instagram": $("#user-url-instagram").val(),
+          "url-x": $("#user-url-x").val(),
+          "url-youtube": $("#user-url-youtube").val(),
+          "url-linkedin": $("#user-url-linkedin").val(),
+          "url-tiktok": $("#user-url-tiktok").val(),
+          // "categories": $("#user-categories").val() || [], // Example for multi-select
         },
       };
 
@@ -127,7 +125,7 @@ var rebaLib = {
       // updated by the handleProfilePicUpload function.
       const newImageUrl = $("#profile-pic-preview").data("new-image-url");
       if (newImageUrl) {
-        dataToSave.fieldData["profile-picture"] = { url: newImageUrl };
+        dataToSave.fieldData["profile-pic"] = { url: newImageUrl };
       }
 
       // --- Send to API ---
@@ -309,9 +307,9 @@ var rebaLib = {
       let attempts = 0;
       const maxAttempts = 50; // Wait 5 seconds
       
-      // We look for [data-ms-member='slug']
+      // We look for [data-ms-member='wf-users-slug']
       // *** You must add this element to your page, e.g.:
-      // <div data-ms-member="slug" style="display:none;"></div>
+      // <div data-ms-member="wf-users-slug" style="display:none;"></div>
       const check = setInterval(function () {
         const $slugEl = $("[data-ms-member='wf-users-slug']");
         
