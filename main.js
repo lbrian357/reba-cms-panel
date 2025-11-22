@@ -4,6 +4,8 @@ const USERS_COLLECTION_ID = "6782edb1ca16eb93e3bf40b5";
 const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
 // NEW: User Types Collection ID (for looking up Agent/Affiliate IDs)
 const USER_TYPES_COLLECTION_ID = "6898242371de0de33b215c88"; 
+// NEW: Brokerages Collection ID
+const BROKERAGES_COLLECTION_ID = "5d1c4a6720876632e4d52d6f";
 
 // --- CONFIGURATION FOR NEW ACCOUNTS ---
 const ACCOUNT_CONFIG = {
@@ -35,6 +37,40 @@ var rebaLib = {
           this.userTypes = types;
           console.log("User Types Loaded:", this.userTypes);
       });
+
+      // 2. PRE-FETCH & POPULATE DROPDOWNS based on account type
+      if (type === 'agent') {
+          rebaLib.api.fetchAllBrokerages((brokerages) => {
+              const $select = $("#brokerage");
+              $select.empty();
+              $select.append('<option value="" disabled selected hidden>Select Your Brokerage</option>');
+              
+              brokerages.forEach(b => {
+                  // For Agent page, value matches the Name
+                  $select.append($("<option>", {
+                      value: b.fieldData.name, 
+                      text: b.fieldData.name
+                  }));
+              });
+              console.log(`Populated ${brokerages.length} brokerages.`);
+          });
+      } else if (type === 'affiliate') {
+          // --- ADDED: Fetch User Categories for Affiliate Page ---
+          rebaLib.api.fetchAllUserCategories((categories) => {
+              const $select = $("#category");
+              $select.empty();
+              $select.append('<option value="" disabled selected hidden>Select Main Category</option>');
+              
+              categories.forEach(c => {
+                  // For Affiliate page, value matches the ID (for reference field)
+                  $select.append($("<option>", {
+                      value: c.id, 
+                      text: c.fieldData.name
+                  }));
+              });
+              console.log(`Populated ${categories.length} categories.`);
+          });
+      }
       
       const formId = "#wf-form-REBA-Create-Agent-Account";
       const $originalForm = $(formId);
@@ -77,9 +113,10 @@ var rebaLib = {
       // 2. Validate that we successfully fetched User Types
       if (!this.userTypes || this.userTypes.length === 0) {
           console.warn("User types not yet loaded. Retrying fetch...");
+          alert("System is initializing. Please wait 2 seconds and try again.");
           // Retry fetching just in case it failed silently
           rebaLib.api.fetchAllUserTypes((types) => { this.userTypes = types; });
-          // Don't alert immediately, give it a second chance or fail gracefully if needed
+          return;
       }
 
       $submitBtn.val("Creating Account...").prop("disabled", true);
@@ -139,6 +176,7 @@ var rebaLib = {
     }
   },
 
+  // --- Profile Page Logic (Existing) ---
   profilePage: {
     quillInstance: null, 
     allCategories: [], 
@@ -347,6 +385,26 @@ var rebaLib = {
       );
     },
 
+    // NEW: Fetch All Brokerages (Paginated)
+    fetchAllBrokerages: function(callback) {
+      const allBrokerages = [];
+      const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${BROKERAGES_COLLECTION_ID}/items/live?limit=100`;
+      
+      rebaLib.api.fetchAllPaginated(url,
+        (items) => { allBrokerages.push(...items); },
+        0,
+        () => {
+            // Sort alphabetically
+            allBrokerages.sort((a, b) => {
+                const nameA = (a.fieldData.name || "").toLowerCase();
+                const nameB = (b.fieldData.name || "").toLowerCase();
+                return nameA.localeCompare(nameB);
+            });
+            if (callback) callback(allBrokerages);
+        }
+      );
+    },
+
     // UPDATED: Create Webflow User (Now accepts userTypes list)
     createWebflowUser: function(formData, type, userTypes) {
         return new Promise((resolve, reject) => {
@@ -366,6 +424,7 @@ var rebaLib = {
 
             // --- NEW: Find the Correct User Type ID ---
             let targetTypeName = "";
+            // Ensure these names match EXACTLY with your Webflow 'User Types' items
             if (type === 'agent') targetTypeName = "Agent";
             if (type === 'affiliate') targetTypeName = "Affiliate";
             
@@ -373,11 +432,13 @@ var rebaLib = {
             
             if (matchingType) {
                 // Webflow Reference Fields require the Item ID
+                // If your field slug is 'user-type', change 'type' below to 'user-type'
                 fields['type'] = matchingType.id; 
             } else {
                 console.warn(`Could not find User Type ID for '${targetTypeName}'. Check collection names.`);
             }
 
+            // Type specific fields - MAINTAINING YOUR CUSTOM LOGIC
             if (type === 'agent' && formData.brokerage) {
                 fields['brokerage'] = formData.brokerage; // YOUR CHANGE: Kept as 'brokerage'
             } 
@@ -387,6 +448,7 @@ var rebaLib = {
                 fields['categories'] = [formData.category]; 
             }
 
+            // YOUR CHANGE: Kept the /live endpoint
             const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items/live`;
             
             $.ajax({
