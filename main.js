@@ -343,7 +343,7 @@ var rebaLib = {
                 fields['categories'] = [formData.category]; 
             }
 
-            const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items`;
+            const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items/live`;
             
             $.ajax({
                 url: url,
