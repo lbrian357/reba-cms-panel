@@ -2,7 +2,7 @@ const PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba";
 const SITE_ID = "5cef42a5323d3a463877056f";
 const USERS_COLLECTION_ID = "6782edb1ca16eb93e3bf40b5";
 const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
-// NEW: Add the User Types Collection ID
+// NEW: User Types Collection ID (for looking up Agent/Affiliate IDs)
 const USER_TYPES_COLLECTION_ID = "6898242371de0de33b215c88"; 
 
 // --- CONFIGURATION FOR NEW ACCOUNTS ---
@@ -76,10 +76,10 @@ var rebaLib = {
       
       // 2. Validate that we successfully fetched User Types
       if (!this.userTypes || this.userTypes.length === 0) {
-          alert("System is initializing. Please try again in a few seconds.");
+          console.warn("User types not yet loaded. Retrying fetch...");
           // Retry fetching just in case it failed silently
           rebaLib.api.fetchAllUserTypes((types) => { this.userTypes = types; });
-          return;
+          // Don't alert immediately, give it a second chance or fail gracefully if needed
       }
 
       $submitBtn.val("Creating Account...").prop("disabled", true);
@@ -139,7 +139,6 @@ var rebaLib = {
     }
   },
 
-  // ... (Profile Page Logic Omitted - same as before) ...
   profilePage: {
     quillInstance: null, 
     allCategories: [], 
@@ -377,12 +376,10 @@ var rebaLib = {
                 fields['type'] = matchingType.id; 
             } else {
                 console.warn(`Could not find User Type ID for '${targetTypeName}'. Check collection names.`);
-                // Fallback? Might fail if required.
             }
 
-            // Type specific fields
             if (type === 'agent' && formData.brokerage) {
-                fields['brokerage'] = formData.brokerage; 
+                fields['brokerage'] = formData.brokerage; // YOUR CHANGE: Kept as 'brokerage'
             } 
             
             if (type === 'affiliate' && formData.category) {
@@ -391,8 +388,6 @@ var rebaLib = {
             }
 
             const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items/live`;
-
-            debugger;
             
             $.ajax({
                 url: url,
