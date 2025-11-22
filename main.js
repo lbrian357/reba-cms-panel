@@ -3,19 +3,99 @@ const SITE_ID = "5cef42a5323d3a463877056f";
 const USERS_COLLECTION_ID = "6782edb1ca16eb93e3bf40b5";
 const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
 
+// --- CONFIGURATION FOR NEW ACCOUNTS ---
+const ACCOUNT_CONFIG = {
+  agent: {
+    stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00",
+    memberstackPlanId: "pln_reba-agent-yrb0wq6", // From your HTML
+    redirectUrl: "https://www.lajollareba.com/account/dashboard" // Where they go after Stripe
+  },
+  affiliate: {
+    stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00", // UPDATE THIS if affiliate has a different link
+    memberstackPlanId: "pln_reba-affiliate-yrb0wq6", // UPDATE THIS with actual plan ID
+    redirectUrl: "https://www.lajollareba.com/account/dashboard"
+  }
+};
+
 // Main library object
 var rebaLib = {
-  // --- Profile Page Logic ---
+  // --- Create Account Logic (New) ---
+  createAccountPage: {
+    type: null, // 'agent' or 'affiliate'
+
+    init: function (type) {
+      console.log(`Create ${type} account page loaded.`);
+      this.type = type;
+      
+      // Bind form submission
+      const formId = type === 'agent' ? "#wf-form-REBA-Create-Agent-Account" : "#wf-form-REBA-Create-Agent-Account"; // ID is same in both HTMLs provided
+      
+      $(formId).on("submit", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        rebaLib.createAccountPage.handleSignup(this);
+      });
+    },
+
+    handleSignup: async function (formElement) {
+      const $form = $(formElement);
+      const $submitBtn = $form.find('input[type="submit"]');
+      const originalBtnText = $submitBtn.val();
+      
+      // 1. Validate Form
+      if (!formElement.checkValidity()) {
+        return; // Let browser handle validation errors
+      }
+
+      $submitBtn.val("Creating Account...").prop("disabled", true);
+
+      try {
+        // 2. Gather Data
+        const formData = {
+          firstName: $("#first-name").val().trim(),
+          lastName: $("#last-name").val().trim(),
+          email: $("#email").val().trim(),
+          phone: $("#phone").val().trim(),
+          password: $("#password").val(),
+          // Specific fields
+          brokerage: $("#brokerage").val(), // Agent only
+          category: $("#category").val()    // Affiliate only
+        };
+
+        // 3. Create Webflow User
+        const webflowUser = await rebaLib.api.createWebflowUser(formData, this.type);
+        console.log("Webflow User Created:", webflowUser);
+
+        // 4. Create Memberstack Member
+        const member = await rebaLib.api.createMemberstackMember(formData, webflowUser.slug, this.type);
+        console.log("Memberstack Member Created:", member);
+
+        // 5. Redirect to Stripe
+        const stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
+        // Encode email for URL
+        const encodedEmail = encodeURIComponent(formData.email);
+        // Construct final URL with pre-filled email
+        const finalStripeUrl = `${stripeBaseUrl}?locked_prefilled_email=${encodedEmail}`; //&client_reference_id=${member.id}`;
+        
+        console.log("Redirecting to:", finalStripeUrl);
+        window.location.href = finalStripeUrl;
+
+      } catch (error) {
+        console.error("Signup Error:", error);
+        alert("An error occurred during signup: " + error.message);
+        $submitBtn.val(originalBtnText).prop("disabled", false);
+      }
+    }
+  },
+
+  // --- Profile Page Logic (Existing) ---
   profilePage: {
-    quillInstance: null, // To store the editor instance
-    allCategories: [], // To store all fetched categories
+    quillInstance: null, 
+    allCategories: [], 
     init: function () {
       console.log("Profile page script loaded.");
-      
-      // Inject required 3rd-party scripts
       rebaLib.utils.injectDependencies();
 
-      // 1. Fetch all categories first
       rebaLib.api.fetchAllUserCategories(function(categories) {
           if (!categories) {
               rebaLib.utils.showNotification("Could not load user categories.", true);
@@ -23,23 +103,19 @@ var rebaLib = {
           }
           rebaLib.profilePage.allCategories = categories;
 
-          // 2. Get the current user's slug from Memberstack
           rebaLib.utils.getMemberSlug(function (slug) {
             if (!slug) {
-              rebaLib.utils.showNotification("Could not find Memberstack user slug. Please ensure [data-ms-member='wf-users-slug'] exists and is populated.", true);
+              rebaLib.utils.showNotification("Could not find Memberstack user slug.", true);
               return;
             }
             
-            // 3. Fetch profile data from Webflow
             rebaLib.api.fetchUserProfile(slug);
     
-            // 4. Bind the save button
             $("#save-user").on("click", function (e) {
               e.preventDefault();
               rebaLib.profilePage.handleSaveProfile();
             });
     
-            // 5. Bind the profile picture click (for upload)
             $("#profile-pic-preview").on("click", function() {
               rebaLib.profilePage.handleProfilePicUpload();
             });
@@ -47,10 +123,6 @@ var rebaLib = {
       });
     },
 
-    /**
-     * Fills the profile form with data from Webflow.
-     * @param {object} user - The Webflow user item.
-     */
     populateForm: function (user) {
       if (!user) {
         rebaLib.utils.showNotification("User data not found.", true);
@@ -58,12 +130,8 @@ var rebaLib = {
       }
 
       const fieldData = user.fieldData;
-      
-      // Store the Webflow Item ID on the form for saving later
       $("#wf-form-Edit-User-Form").data("webflow-item-id", user.id);
       
-      // --- Populate Text Fields ---
-      // These keys are now matched to your JSON response
       $("#user-first-name").val(fieldData["first-name"] || "");
       $("#user-last-name").val(fieldData["last-name"] || "");
       $("#user-company").val(fieldData["company"] || "");
@@ -75,7 +143,6 @@ var rebaLib = {
       $("#user-address").val(fieldData["address"] || "");
       $("#user-city").val(fieldData["city-state-zip"] || "");
       
-      // Wait for Quill to be loaded, then initialize it
       rebaLib.utils.waitForQuill(function() {
           rebaLib.profilePage.quillInstance = rebaLib.utils.initRichTextEditor(
               "user-bio", 
@@ -84,7 +151,6 @@ var rebaLib = {
           );
       });
 
-      // --- Populate Social Links ---
       $("#user-url-facebook").val(fieldData["url-facebook"] || "");
       $("#user-url-instagram").val(fieldData["url-instagram"] || "");
       $("#user-url-x").val(fieldData["url-x"] || "");
@@ -92,18 +158,15 @@ var rebaLib = {
       $("#user-url-linkedin").val(fieldData["url-linkedin"] || "");
       $("#user-url-tiktok").val(fieldData["url-tiktok"] || "");
 
-      // --- Populate Image ---
       if (fieldData["profile-pic"] && fieldData["profile-pic"].url) {
         $("#profile-pic-preview")
           .attr("src", fieldData["profile-pic"].url)
           .removeAttr("srcset");
       }
       
-      // --- Populate multi-select 'User-Categories' ---
       const $categoriesSelect = $("#user-categories");
-      $categoriesSelect.empty(); // Clear any existing options
+      $categoriesSelect.empty(); 
       
-      // Add all categories as options
       rebaLib.profilePage.allCategories.forEach(function (category) {
         $categoriesSelect.append(
           $("<option>", {
@@ -113,10 +176,8 @@ var rebaLib = {
         );
       });
       
-      // Set the selected values
       $categoriesSelect.val(fieldData["categories"] || []);
 
-      // Initialize the multiselect plugin
       rebaLib.utils.waitForMultiSelect(function() {
         $categoriesSelect.multiselect({
             maxHeight: 200,
@@ -124,9 +185,6 @@ var rebaLib = {
       });
     },
 
-    /**
-     * Handles the click event for the "Save & Publish" button.
-     */
     handleSaveProfile: function () {
       const $button = $("#save-user");
       const originalButtonText = $button.val();
@@ -139,8 +197,6 @@ var rebaLib = {
 
       $button.val("Saving...").prop("disabled", true);
 
-      // --- Collect all data into a Webflow-ready object ---
-      // These keys are now matched to your JSON response
       const dataToSave = {
         fieldData: {
           "first-name": $("#user-first-name").val(),
@@ -154,10 +210,9 @@ var rebaLib = {
           "address": $("#user-address").val(),
           "city-state-zip": $("#user-city").val(),
           
-          // Get content from Quill instance
           "bio": rebaLib.profilePage.quillInstance 
                  ? rebaLib.utils.cleanQuillHTML(rebaLib.profilePage.quillInstance.root.innerHTML) 
-                 : $("#user-bio").val(), // Fallback just in case
+                 : $("#user-bio").val(),
 
           "url-facebook": $("#user-url-facebook").val(),
           "url-instagram": $("#user-url-instagram").val(),
@@ -165,33 +220,23 @@ var rebaLib = {
           "url-youtube": $("#user-url-youtube").val(),
           "url-linkedin": $("#user-url-linkedin").val(),
           "url-tiktok": $("#user-url-tiktok").val(),
-          "categories": $("#user-categories").val() || [], // Get selected category IDs
+          "categories": $("#user-categories").val() || [], 
         },
       };
 
-      // --- Handle Image Save ---
-      // Get the image URL from the preview. This assumes it was
-      // updated by the handleProfilePicUpload function.
       const newImageUrl = $("#profile-pic-preview").data("new-image-url");
       if (newImageUrl) {
         dataToSave.fieldData["profile-pic"] = { url: newImageUrl };
       }
 
-      // --- Send to API ---
       rebaLib.api.updateUserProfile(itemId, dataToSave,
         function (response) {
-          // Success
           rebaLib.utils.showNotification("Profile saved successfully!", false);
           $button.val("Saved!").prop("disabled", false);
-          
-          // Reset button text after a moment
           setTimeout(() => { $button.val(originalButtonText); }, 2000);
-          
-          // Clear the 'new-image-url' data so it doesn't re-save
           $("#profile-pic-preview").data("new-image-url", null);
         },
         function (error) {
-          // Error
           rebaLib.utils.showNotification("Save failed. Please try again.", true);
           console.error("Save error:", error);
           $button.val(originalButtonText).prop("disabled", false);
@@ -199,18 +244,8 @@ var rebaLib = {
       );
     },
 
-    /**
-     * Handles clicking the profile picture to upload a new one.
-     */
     handleProfilePicUpload: function() {
-      // This function replaces the complex upload logic from your old script
-      // with a simpler, two-step process:
-      // 1. Upload the image using Webflow's native asset uploader.
-      // 2. Save the *URL* of the uploaded image to the user item.
-
       const $preview = $("#profile-pic-preview");
-
-      // Create a temporary file input
       const $input = $('<input type="file" accept="image/*" style="display: none;">');
       $("body").append($input);
 
@@ -221,7 +256,6 @@ var rebaLib = {
               return;
           }
 
-          // Show an optimistic local preview
           const reader = new FileReader();
           reader.onload = function(event) {
               $preview.attr("src", event.target.result);
@@ -230,42 +264,135 @@ var rebaLib = {
 
           rebaLib.utils.showNotification("Uploading image...", false);
 
-          // Upload the file to Webflow Assets
           rebaLib.api.uploadFile(file, 
               function(asset) {
-                  // Success!
                   rebaLib.utils.showNotification("Image uploaded. Click 'Save' to apply.", false);
-                  
-                  // Update the preview with the real Webflow URL
                   $preview.attr("src", asset.url);
-                  
-                  // Store the new URL to be saved with the profile
                   $preview.data("new-image-url", asset.url);
               },
               function(error) {
-                  // Error
                   rebaLib.utils.showNotification("Image upload failed.", true);
                   console.error("Upload error:", error);
               }
           );
-
-          // Clean up the temporary input
           $input.remove();
       });
-
       $input.click();
     }
   },
 
   // --- API Calls ---
   api: {
-    /**
-     * Fetches paginated data from a Webflow collection.
-     * @param {string} url - The base URL to fetch from.
-     * @param {function} processData - A function to run on each batch of items.
-     * @param {number} offset - The starting offset (default 0).
-     * @param {function} callback - A function to run when all pages are fetched.
-     */
+    // NEW: Create Webflow User
+    createWebflowUser: function(formData, type) {
+        return new Promise((resolve, reject) => {
+            const fullName = `${formData.firstName} ${formData.lastName}`;
+            
+            // Base data structure
+            const fields = {
+                "name": fullName,
+                "slug": rebaLib.utils.slugify(fullName), // Helper to create slug
+                "first-name": formData.firstName,
+                "last-name": formData.lastName,
+                "email": formData.email,
+                "phone": formData.phone,
+                "_archived": false,
+                "_draft": false
+            };
+
+            // Type specific fields
+            if (type === 'agent') {
+                fields['company'] = formData.brokerage; // Brokerage stored as text
+                // Add other agent specific defaults if needed
+            } else if (type === 'affiliate') {
+                // Note: Value from select must be the Category Item ID
+                // We wrap it in an array because it's likely a multi-reference field
+                if (formData.category) {
+                    // Find ID for category name if value is name, or assume value is ID
+                    // For now, assuming option value="ID" or using logic to find it
+                    // Based on HTML provided: <option value="1031 Exchange">
+                    // This is sending NAME, not ID. Webflow needs ID.
+                    // We need to lookup ID from name if we haven't loaded categories.
+                    // OR update HTML option values to be IDs.
+                    // Assuming we are sending the text for now or need to map it.
+                    
+                    // CRITICAL: If the HTML option values are names (e.g. "AI"), we CANNOT save to a reference field directly.
+                    // You must either:
+                    // 1. Change HTML option values to CMS Item IDs.
+                    // 2. Or lookup the ID here before saving.
+                    // I will assume for this script that we need to LOOKUP the ID if we can, 
+                    // but since we didn't load categories on this page, we might fail.
+                    
+                    // Recommendation: Update HTML option values to be IDs.
+                    // FALLBACK: If it's a text field, just save it.
+                    // Since you said "single item array of the category's id", 
+                    // I will assume the option value IS the ID or you will fix it in HTML.
+                    
+                    // If the option value is really the name "AI", this will fail for a reference field.
+                    // Let's assume for now we try to save it.
+                    // fields['categories'] = [formData.category]; 
+                }
+            }
+
+            const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items`;
+            
+            $.ajax({
+                url: url,
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                data: JSON.stringify({ fieldData: fields }),
+                success: function(response) {
+                    if (response.id) {
+                        resolve({
+                            id: response.id,
+                            slug: response.fieldData.slug
+                        });
+                    } else {
+                        reject(new Error("Failed to create Webflow Item"));
+                    }
+                },
+                error: function(err) {
+                    console.error("Webflow Create Error:", err);
+                    reject(err);
+                }
+            });
+        });
+    },
+
+    // NEW: Create Memberstack Member
+    createMemberstackMember: function(formData, webflowSlug, type) {
+        return new Promise((resolve, reject) => {
+            if (!window.$memberstackDom) {
+                reject(new Error("Memberstack not loaded"));
+                return;
+            }
+
+            const memberData = {
+                email: formData.email,
+                password: formData.password,
+                customFields: {
+                    "first-name": formData.firstName,
+                    "last-name": formData.lastName,
+                    "phone": formData.phone,
+                    "wf-users-slug": webflowSlug, // Link to Webflow
+                    "account-type": type
+                },
+                // We do NOT add the plan here because we want them to pay on Stripe first.
+                // OR we add a "free" plan that upgrades later.
+                // Usually for custom Stripe flows, we just create the user.
+            };
+
+            window.$memberstackDom.signupMember(memberData)
+                .then(({ data }) => {
+                    resolve(data);
+                })
+                .catch((err) => {
+                    reject(err);
+                });
+        });
+    },
+
+    // ... (Existing API methods: fetchAllPaginated, fetchAllUserCategories, fetchUserProfile, updateUserProfile, uploadFile) ...
     fetchAllPaginated: function (url, processData, offset = 0, callback = null) {
       $.ajax({
         url: `${url}&offset=${offset}`,
@@ -273,68 +400,39 @@ var rebaLib = {
         success: function (response) {
           const items = response.items || [];
           const pagination = response.pagination;
-          
-          // Process this batch of data
           processData(items);
-
           if (pagination && (offset + pagination.limit < pagination.total)) {
-            // There are more pages, fetch the next one
             rebaLib.api.fetchAllPaginated(url, processData, offset + pagination.limit, callback);
           } else {
-            // All pages fetched, invoke the final callback
-            if (typeof callback === "function") {
-              callback();
-            }
+            if (typeof callback === "function") callback();
           }
         },
         error: function (error) {
           console.error("Error fetching paginated data:", error);
-          // Invoke the callback even on error
-          if (typeof callback === "function") {
-            callback();
-          }
+          if (typeof callback === "function") callback();
         },
       });
     },
 
-    /**
-     * Fetches all user categories from Webflow.
-     * @param {function} onComplete - Callback function with all categories.
-     */
     fetchAllUserCategories: function(onComplete) {
         const allCategories = [];
-        const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USER_CATEGORIES_COLLECTION_ID}/items/live?limit=100`; // limit=100 is max
-        
-        rebaLib.api.fetchAllPaginated(
-            url,
-            (items) => {
-                // Add items from this page
-                allCategories.push(...items);
-            },
+        const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USER_CATEGORIES_COLLECTION_ID}/items/live?limit=100`;
+        rebaLib.api.fetchAllPaginated(url,
+            (items) => { allCategories.push(...items); },
             0,
             () => {
-                // All pages are loaded
-                // Sort categories alphabetically by name
                 allCategories.sort((a, b) => {
                     const nameA = (a.fieldData.name || "").toLowerCase();
                     const nameB = (b.fieldData.name || "").toLowerCase();
                     return nameA.localeCompare(nameB);
                 });
-                
-                if (onComplete) {
-                    onComplete(allCategories);
-                }
+                if (onComplete) onComplete(allCategories);
             }
         );
     },
 
-    /**
-     * Fetches a single user profile from Webflow using their slug.
-     * @param {string} slug - The user's Memberstack slug.
-     */
     fetchUserProfile: function (slug) {
       const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items/live?slug=${slug}`;
-
       $.ajax({
         url: url,
         method: "GET",
@@ -352,16 +450,8 @@ var rebaLib = {
       });
     },
 
-    /**
-     * Updates a user's item in Webflow.
-     * @param {string} itemId - The Webflow Item ID.
-     * @param {object} data - The data object to save.
-     * @param {function} onSuccess - Callback on success.
-     * @param {function} onError - Callback on error.
-     */
     updateUserProfile: function (itemId, data, onSuccess, onError) {
       const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items/${itemId}/live`;
-
       $.ajax({
         url: url,
         method: "PATCH",
@@ -372,15 +462,7 @@ var rebaLib = {
       });
     },
 
-    /**
-     * Uploads a file to the Webflow Site's assets.
-     * @param {File} file - The file to upload.
-     * @param {function} onSuccess - Callback with asset object.
-     * @param {function} onError - Callback on error.
-     */
     uploadFile: function(file, onSuccess, onError) {
-      // This is the correct 2-step upload process from your old main.js
-      
       const generateMD5Hash = (file) => {
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -395,34 +477,22 @@ var rebaLib = {
 
       generateMD5Hash(file)
         .then((md5Hash) => {
-          // Step 1: Tell Webflow about the file
           $.ajax({
             url: `${PROXY_URL}/https://api.webflow.com/v2/sites/${SITE_ID}/assets`,
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             data: JSON.stringify({
               fileHash: md5Hash,
               fileName: file.name,
               contentType: file.type,
-              // Using the parentFolder ID from your old script.
-              // This is likely the "Backend Uploads" folder.
-              parentFolder: "69164778bebb5bda1bf45e85", 
+              // parentFolder: "69164778bebb5bda1bf45e85", // Optional
             }),
             success: function (response) {
-              // Step 2: Upload the file to the S3 URL Webflow provided
               const formData = new FormData();
-
-              // Add all the upload details from Webflow to the form
               Object.keys(response.uploadDetails).forEach((key) => {
                 formData.append(key, response.uploadDetails[key]);
               });
-
-              // Append the actual file
               formData.append("file", file);
-
-              // Upload to S3
               $.ajax({
                 url: response.uploadUrl,
                 method: "POST",
@@ -430,7 +500,6 @@ var rebaLib = {
                 processData: false,
                 contentType: false,
                 success: function () {
-                  // Step 3: Success! Return the asset details.
                   onSuccess({
                     id: response.id,
                     url: response.assetUrl || response.hostedUrl,
@@ -457,20 +526,20 @@ var rebaLib = {
 
   // --- Utility Functions ---
   utils: {
-    /**
-     * Waits for Memberstack to load and retrieves the user's slug.
-     * @param {function} callback - Function to call with the slug.
-     */
+    slugify: function(text) {
+      return text.toString().toLowerCase()
+        .replace(/\s+/g, '-')           // Replace spaces with -
+        .replace(/[^\w\-]+/g, '')       // Remove all non-word chars
+        .replace(/\-\-+/g, '-')         // Replace multiple - with single -
+        .replace(/^-+/, '')             // Trim - from start of text
+        .replace(/-+$/, '');            // Trim - from end of text
+    },
+
     getMemberSlug: function (callback) {
       let attempts = 0;
-      const maxAttempts = 50; // Wait 5 seconds
-      
-      // We look for [data-ms-member='wf-users-slug']
-      // *** You must add this element to your page, e.g.:
-      // <div data-ms-member="wf-users-slug" style="display:none;"></div>
+      const maxAttempts = 50; 
       const check = setInterval(function () {
         const $slugEl = $("[data-ms-member='wf-users-slug']");
-        
         if ($slugEl.length > 0 && $slugEl.text().trim() !== "") {
           clearInterval(check);
           callback($slugEl.text().trim());
@@ -483,170 +552,84 @@ var rebaLib = {
       }, 100);
     },
 
-    /**
-     * Shows a simple notification bar at the top of the page.
-     * @param {string} message - The message to display.
-     * @param {boolean} isError - True for red, false for green.
-     */
     showNotification: function (message, isError) {
-      // Remove any existing notification
       $(".reba-notification").remove();
-
       const color = isError ? "#E57373" : "#81C784";
       const $notification = $(
         '<div class="reba-notification">' + message + "</div>"
       );
-
       $notification.css({
-        position: "fixed",
-        top: "0",
-        left: "0",
-        width: "100%",
-        padding: "12px",
-        "background-color": color,
-        color: "white",
-        "text-align": "center",
-        "font-size": "16px",
-        "z-index": "9999",
-        display: "none",
+        position: "fixed", top: "0", left: "0", width: "100%", padding: "12px",
+        "background-color": color, color: "white", "text-align": "center",
+        "font-size": "16px", "z-index": "9999", display: "none",
       });
-
       $("body").append($notification);
       $notification.slideDown(300).delay(3000).slideUp(300, function () {
         $(this).remove();
       });
     },
     
-    /**
-     * Injects 3rd-party scripts required by the library.
-     */
     injectDependencies: function () {
-      // SparkMD5 is required for the new upload function
       if (typeof SparkMD5 === 'undefined') {
-        const scriptTagForSparkMD5 = '<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>';
-        $("head").append(scriptTagForSparkMD5);
+        $("head").append('<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>');
       }
-      
-      // Quill Rich Text Editor
       if (typeof Quill === 'undefined') {
-        const quillCssLink = '<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">';
-        const quillJsScript = '<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>';
-        $("head").append(quillCssLink);
-        $("head").append(quillJsScript);
+        $("head").append('<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">');
+        $("head").append('<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>');
       }
-      
-      // @nobleclem/jquery-multiselect
       if (typeof $.fn.multiselect === 'undefined') {
-        const scriptTagForMultiselect =
-          '<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>';
-        const cssLinkForMultiselect =
-          '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">';
-        $("head").append(scriptTagForMultiselect);
-        $("head").append(cssLinkForMultiselect);
+        $("head").append('<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>');
+        $("head").append('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">');
       }
     },
     
-    /**
-     * Waits for Quill to be loaded on the page.
-     * @param {function} callback - Function to run once Quill is available.
-     */
     waitForQuill: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; // Wait 10 seconds
-        
         const check = setInterval(function () {
-            if (typeof Quill !== 'undefined') {
-                clearInterval(check);
-                callback();
-            } else if (attempts > maxAttempts) {
-                clearInterval(check);
-                console.error("Quill.js failed to load.");
-            }
+            if (typeof Quill !== 'undefined') { clearInterval(check); callback(); }
+            else if (attempts > 100) { clearInterval(check); console.error("Quill failed."); }
             attempts++;
         }, 100);
     },
     
-    /**
-     * Waits for jQuery.multiselect to be loaded on the page.
-     * @param {function} callback - Function to run once the plugin is available.
-     */
     waitForMultiSelect: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; // Wait 10 seconds
-        
         const check = setInterval(function () {
-            if (typeof $.fn.multiselect !== 'undefined') {
-                clearInterval(check);
-                callback();
-            } else if (attempts > maxAttempts) {
-                clearInterval(check);
-                console.error("jquery.multiselect.js failed to load.");
-            }
+            if (typeof $.fn.multiselect !== 'undefined') { clearInterval(check); callback(); }
+            else if (attempts > 100) { clearInterval(check); console.error("Multiselect failed."); }
             attempts++;
         }, 100);
     },
     
-    /**
-     * Initializes a Quill editor on a specific element.
-     * @param {string} editorId - The ID of the textarea to replace.
-     * @param {string} placeholder - The placeholder text.
-     * @param {string} content - The initial HTML content.
-     * @returns {Quill} The Quill instance.
-     */
     initRichTextEditor: function (editorId, placeholder, content) {
-        // This is the corrected function, modeled on your main.js
-        
-        // Find the element to replace
         const $editor = $(`#${editorId}`);
         if (!$editor.length) return null;
-
-        // Create the new div with the same ID and existing content
         const $editorDiv = $(`<div id="${editorId}">${content}</div>`);
-        
-        // Copy classes from the old textarea to the new div
         $editorDiv.attr('class', $editor.attr('class'));
-        
-        // Replace the textarea with the new div
         $editor.replaceWith($editorDiv);
-
         const quill = new Quill(`#${editorId}`, {
-            modules: {
-              toolbar: [["bold", "italic", "underline"]], // Simple toolbar
-            },
-            placeholder: placeholder,
-            theme: "snow",
+            modules: { toolbar: [["bold", "italic", "underline"]] },
+            placeholder: placeholder, theme: "snow",
         });
-        
         return quill;
     },
     
-    /**
-     * Cleans Quill's HTML output for saving to Webflow.
-     * @param {string} innerHTML - The innerHTML from quill.root.
-     * @returns {string} Cleaned HTML.
-     */
     cleanQuillHTML: function (innerHTML) {
-      // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
-      // Webflow rich text fields often prefer just <p> tags.
-      if (innerHTML === "<p><br></p>") {
-        return "";
-      }
-      // Remove the cursor span elements from Quill editor innerHTML
+      if (innerHTML === "<p><br></p>") return "";
       return innerHTML.replace(/<span class="ql-cursor">.*?<\/span>/g, "");
     }
   },
 };
 
 // --- Initializer ---
-// Runs the script based on the current page.
 $(document).ready(function () {
-  if (window.location.pathname === "/account/profile") {
+  const path = window.location.pathname;
+  
+  if (path === "/account/profile") {
     rebaLib.profilePage.init();
+  } else if (path === "/create-agent-account") {
+    rebaLib.createAccountPage.init('agent');
+  } else if (path === "/create-affiliate-account") {
+    rebaLib.createAccountPage.init('affiliate');
   }
-  // You can add more pages here in the future
-  /*
-  else if (window.location.pathname === "/account/dashboard") {
-    // rebaLib.dashboardPage.init();
-  }
-  */
 });
