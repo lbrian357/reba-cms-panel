@@ -7,12 +7,12 @@ const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
 const ACCOUNT_CONFIG = {
   agent: {
     stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00",
-    memberstackPlanId: "pln_reba-agent-yrb0wq6", // From your HTML
-    redirectUrl: "https://www.lajollareba.com/account/dashboard" // Where they go after Stripe
+    memberstackPlanId: "pln_reba-agent-yrb0wq6", 
+    redirectUrl: "https://www.lajollareba.com/account/dashboard" 
   },
   affiliate: {
-    stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00", // UPDATE THIS if affiliate has a different link
-    memberstackPlanId: "pln_reba-affiliate-yrb0wq6", // UPDATE THIS with actual plan ID
+    stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00", 
+    memberstackPlanId: "pln_reba-affiliate-yrb0wq6",
     redirectUrl: "https://www.lajollareba.com/account/dashboard"
   }
 };
@@ -27,12 +27,29 @@ var rebaLib = {
       console.log(`Create ${type} account page loaded.`);
       this.type = type;
       
-      // Bind form submission
-      const formId = type === 'agent' ? "#wf-form-REBA-Create-Agent-Account" : "#wf-form-REBA-Create-Agent-Account"; // ID is same in both HTMLs provided
+      const formId = "#wf-form-REBA-Create-Agent-Account";
+      const $originalForm = $(formId);
       
-      $(formId).on("submit", function (e) {
+      if ($originalForm.length === 0) return;
+
+      // --- THE ANTI-HIJACK FIX ---
+      // 1. Remove the attribute that attracts Memberstack (just in case)
+      $originalForm.removeAttr('data-ms-form');
+
+      // 2. CLONE THE FORM to strip all native event listeners (Memberstack's listeners)
+      const originalNode = $originalForm[0];
+      const clonedNode = originalNode.cloneNode(true);
+      
+      // 3. Replace the original 'infected' form with our clean clone in the DOM
+      originalNode.parentNode.replaceChild(clonedNode, originalNode);
+      
+      console.log("Form cloned and replaced to strip Memberstack listeners.");
+
+      // 4. Bind OUR handler to the new, clean clone
+      $(clonedNode).on("submit", function (e) {
         e.preventDefault();
         e.stopPropagation();
+        console.log("Custom submit handler triggered!"); 
         rebaLib.createAccountPage.handleSignup(this);
       });
     },
@@ -44,7 +61,8 @@ var rebaLib = {
       
       // 1. Validate Form
       if (!formElement.checkValidity()) {
-        return; // Let browser handle validation errors
+        formElement.reportValidity();
+        return; 
       }
 
       $submitBtn.val("Creating Account...").prop("disabled", true);
@@ -57,38 +75,54 @@ var rebaLib = {
           email: $("#email").val().trim(),
           phone: $("#phone").val().trim(),
           password: $("#password").val(),
-          // Specific fields
-          brokerage: $("#brokerage").val(), // Agent only
-          category: $("#category").val()    // Affiliate only
+          // Specific fields - handle empty values
+          brokerage: $("#brokerage").val() || "", 
+          category: $("#category").val() || ""    
         };
 
         // 3. Create Webflow User
+        console.log("Creating Webflow User...");
         const webflowUser = await rebaLib.api.createWebflowUser(formData, this.type);
         console.log("Webflow User Created:", webflowUser);
 
         // 4. Create Memberstack Member
+        console.log("Creating Memberstack Member...");
         const member = await rebaLib.api.createMemberstackMember(formData, webflowUser.slug, this.type);
         console.log("Memberstack Member Created:", member);
 
         // 5. Redirect to Stripe
         const stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
-        // Encode email for URL
         const encodedEmail = encodeURIComponent(formData.email);
-        // Construct final URL with pre-filled email
-        const finalStripeUrl = `${stripeBaseUrl}?locked_prefilled_email=${encodedEmail}`; //&client_reference_id=${member.id}`;
+        
+        // Pass the Webflow ID as client_reference_id so webhook knows who paid
+        const clientRefId = webflowUser.id; 
+        
+        const finalStripeUrl = `${stripeBaseUrl}?locked_prefilled_email=${encodedEmail}&client_reference_id=${clientRefId}`; 
         
         console.log("Redirecting to:", finalStripeUrl);
         window.location.href = finalStripeUrl;
 
       } catch (error) {
         console.error("Signup Error:", error);
-        alert("An error occurred during signup: " + error.message);
+        let errorMsg = "An error occurred during signup.";
+        
+        if (typeof error === 'string') {
+            errorMsg = error;
+        } else if (error.message) {
+             if (error.message.includes("email")) {
+                errorMsg = "This email is already registered.";
+             } else {
+                errorMsg += " " + error.message;
+             }
+        }
+        
+        alert(errorMsg);
         $submitBtn.val(originalBtnText).prop("disabled", false);
       }
     }
   },
 
-  // --- Profile Page Logic (Existing) ---
+  // ... (Profile Page Logic remains unchanged) ...
   profilePage: {
     quillInstance: null, 
     allCategories: [], 
@@ -291,7 +325,7 @@ var rebaLib = {
             // Base data structure
             const fields = {
                 "name": fullName,
-                "slug": rebaLib.utils.slugify(fullName), // Helper to create slug
+                "slug": rebaLib.utils.slugify(fullName), 
                 "first-name": formData.firstName,
                 "last-name": formData.lastName,
                 "email": formData.email,
@@ -301,37 +335,12 @@ var rebaLib = {
             };
 
             // Type specific fields
-            if (type === 'agent') {
-                fields['company'] = formData.brokerage; // Brokerage stored as text
-                // Add other agent specific defaults if needed
-            } else if (type === 'affiliate') {
-                // Note: Value from select must be the Category Item ID
-                // We wrap it in an array because it's likely a multi-reference field
-                if (formData.category) {
-                    // Find ID for category name if value is name, or assume value is ID
-                    // For now, assuming option value="ID" or using logic to find it
-                    // Based on HTML provided: <option value="1031 Exchange">
-                    // This is sending NAME, not ID. Webflow needs ID.
-                    // We need to lookup ID from name if we haven't loaded categories.
-                    // OR update HTML option values to be IDs.
-                    // Assuming we are sending the text for now or need to map it.
-                    
-                    // CRITICAL: If the HTML option values are names (e.g. "AI"), we CANNOT save to a reference field directly.
-                    // You must either:
-                    // 1. Change HTML option values to CMS Item IDs.
-                    // 2. Or lookup the ID here before saving.
-                    // I will assume for this script that we need to LOOKUP the ID if we can, 
-                    // but since we didn't load categories on this page, we might fail.
-                    
-                    // Recommendation: Update HTML option values to be IDs.
-                    // FALLBACK: If it's a text field, just save it.
-                    // Since you said "single item array of the category's id", 
-                    // I will assume the option value IS the ID or you will fix it in HTML.
-                    
-                    // If the option value is really the name "AI", this will fail for a reference field.
-                    // Let's assume for now we try to save it.
-                    // fields['categories'] = [formData.category]; 
-                }
+            if (type === 'agent' && formData.brokerage) {
+                fields['company'] = formData.brokerage; 
+            } 
+            
+            if (type === 'affiliate' && formData.category) {
+                fields['categories'] = [formData.category]; 
             }
 
             const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items`;
@@ -348,12 +357,23 @@ var rebaLib = {
                             slug: response.fieldData.slug
                         });
                     } else {
-                        reject(new Error("Failed to create Webflow Item"));
+                        reject(new Error("Failed to create Webflow Item: No ID returned"));
                     }
                 },
-                error: function(err) {
-                    console.error("Webflow Create Error:", err);
-                    reject(err);
+                error: function(xhr, status, error) {
+                    console.error("Webflow Create Error:", xhr.responseText);
+                    let errorMsg = "Failed to create Webflow user.";
+                    try {
+                        if (xhr.responseText) {
+                            const response = JSON.parse(xhr.responseText);
+                            if (response.message) errorMsg += " " + response.message;
+                            if (response.error) errorMsg += " " + response.error;
+                        }
+                    } catch(e) {
+                        console.error("Could not parse error response:", e);
+                        errorMsg += " (Server returned: " + status + ")";
+                    }
+                    reject(new Error(errorMsg));
                 }
             });
         });
@@ -362,37 +382,49 @@ var rebaLib = {
     // NEW: Create Memberstack Member
     createMemberstackMember: function(formData, webflowSlug, type) {
         return new Promise((resolve, reject) => {
-            if (!window.$memberstackDom) {
-                reject(new Error("Memberstack not loaded"));
-                return;
+            // Wait for Memberstack to be available (Retry Loop)
+            let attempts = 0;
+            const maxAttempts = 50; // 5 seconds max wait
+            
+            const waitForMs = setInterval(() => {
+                // CHANGED: Using specific 'signupMemberEmailPassword' as found in console dump
+                if (window.$memberstackDom && typeof window.$memberstackDom.signupMemberEmailPassword === 'function') {
+                    clearInterval(waitForMs);
+                    executeSignup();
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(waitForMs);
+                    console.error("Memberstack timeout details:", window.$memberstackDom); 
+                    reject(new Error("Memberstack failed to load. Please refresh the page and try again."));
+                }
+                attempts++;
+            }, 100);
+
+            function executeSignup() {
+                const memberData = {
+                    email: formData.email,
+                    password: formData.password,
+                    customFields: {
+                        "first-name": formData.firstName,
+                        "last-name": formData.lastName,
+                        "phone": formData.phone,
+                        "wf-users-slug": webflowSlug, 
+                        "account-type": type
+                    },
+                };
+
+                window.$memberstackDom.signupMemberEmailPassword(memberData)
+                    .then(({ data }) => {
+                        resolve(data);
+                    })
+                    .catch((err) => {
+                        console.error("Memberstack Signup Error:", err);
+                        reject(new Error(err.message || "Failed to create Memberstack account."));
+                    });
             }
-
-            const memberData = {
-                email: formData.email,
-                password: formData.password,
-                customFields: {
-                    "first-name": formData.firstName,
-                    "last-name": formData.lastName,
-                    "phone": formData.phone,
-                    "wf-users-slug": webflowSlug, // Link to Webflow
-                    "account-type": type
-                },
-                // We do NOT add the plan here because we want them to pay on Stripe first.
-                // OR we add a "free" plan that upgrades later.
-                // Usually for custom Stripe flows, we just create the user.
-            };
-
-            window.$memberstackDom.signupMember(memberData)
-                .then(({ data }) => {
-                    resolve(data);
-                })
-                .catch((err) => {
-                    reject(err);
-                });
         });
     },
 
-    // ... (Existing API methods: fetchAllPaginated, fetchAllUserCategories, fetchUserProfile, updateUserProfile, uploadFile) ...
+    // ... (Existing API methods omitted for brevity - assume they exist) ...
     fetchAllPaginated: function (url, processData, offset = 0, callback = null) {
       $.ajax({
         url: `${url}&offset=${offset}`,
