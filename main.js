@@ -2,6 +2,8 @@ const PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba";
 const SITE_ID = "5cef42a5323d3a463877056f";
 const USERS_COLLECTION_ID = "6782edb1ca16eb93e3bf40b5";
 const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
+// NEW: Add the User Types Collection ID
+const USER_TYPES_COLLECTION_ID = "6898242371de0de33b215c88"; 
 
 // --- CONFIGURATION FOR NEW ACCOUNTS ---
 const ACCOUNT_CONFIG = {
@@ -22,10 +24,17 @@ var rebaLib = {
   // --- Create Account Logic (New) ---
   createAccountPage: {
     type: null, // 'agent' or 'affiliate'
+    userTypes: [], // Store fetched user types here
 
     init: function (type) {
       console.log(`Create ${type} account page loaded.`);
       this.type = type;
+      
+      // 1. PRE-FETCH User Types immediately so we have the IDs ready
+      rebaLib.api.fetchAllUserTypes((types) => {
+          this.userTypes = types;
+          console.log("User Types Loaded:", this.userTypes);
+      });
       
       const formId = "#wf-form-REBA-Create-Agent-Account";
       const $originalForm = $(formId);
@@ -64,11 +73,19 @@ var rebaLib = {
         formElement.reportValidity();
         return; 
       }
+      
+      // 2. Validate that we successfully fetched User Types
+      if (!this.userTypes || this.userTypes.length === 0) {
+          alert("System is initializing. Please try again in a few seconds.");
+          // Retry fetching just in case it failed silently
+          rebaLib.api.fetchAllUserTypes((types) => { this.userTypes = types; });
+          return;
+      }
 
       $submitBtn.val("Creating Account...").prop("disabled", true);
 
       try {
-        // 2. Gather Data
+        // 3. Gather Data
         const formData = {
           firstName: $("#first-name").val().trim(),
           lastName: $("#last-name").val().trim(),
@@ -80,17 +97,17 @@ var rebaLib = {
           category: $("#category").val() || ""    
         };
 
-        // 3. Create Webflow User
+        // 4. Create Webflow User (Pass userTypes to help lookup IDs)
         console.log("Creating Webflow User...");
-        const webflowUser = await rebaLib.api.createWebflowUser(formData, this.type);
+        const webflowUser = await rebaLib.api.createWebflowUser(formData, this.type, this.userTypes);
         console.log("Webflow User Created:", webflowUser);
 
-        // 4. Create Memberstack Member
+        // 5. Create Memberstack Member
         console.log("Creating Memberstack Member...");
         const member = await rebaLib.api.createMemberstackMember(formData, webflowUser.slug, this.type);
         console.log("Memberstack Member Created:", member);
 
-        // 5. Redirect to Stripe
+        // 6. Redirect to Stripe
         const stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
         const encodedEmail = encodeURIComponent(formData.email);
         
@@ -122,7 +139,7 @@ var rebaLib = {
     }
   },
 
-  // ... (Profile Page Logic remains unchanged) ...
+  // ... (Profile Page Logic Omitted - same as before) ...
   profilePage: {
     quillInstance: null, 
     allCategories: [], 
@@ -317,8 +334,22 @@ var rebaLib = {
 
   // --- API Calls ---
   api: {
-    // NEW: Create Webflow User
-    createWebflowUser: function(formData, type) {
+    // NEW: Fetch All User Types
+    fetchAllUserTypes: function(callback) {
+      const allTypes = [];
+      const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USER_TYPES_COLLECTION_ID}/items/live?limit=100`;
+      
+      rebaLib.api.fetchAllPaginated(url,
+        (items) => { allTypes.push(...items); },
+        0,
+        () => {
+            if (callback) callback(allTypes);
+        }
+      );
+    },
+
+    // UPDATED: Create Webflow User (Now accepts userTypes list)
+    createWebflowUser: function(formData, type, userTypes) {
         return new Promise((resolve, reject) => {
             const fullName = `${formData.firstName} ${formData.lastName}`;
             
@@ -334,16 +365,34 @@ var rebaLib = {
                 "_draft": false
             };
 
+            // --- NEW: Find the Correct User Type ID ---
+            let targetTypeName = "";
+            if (type === 'agent') targetTypeName = "Agent";
+            if (type === 'affiliate') targetTypeName = "Affiliate";
+            
+            const matchingType = userTypes.find(t => t.fieldData.name === targetTypeName);
+            
+            if (matchingType) {
+                // Webflow Reference Fields require the Item ID
+                fields['type'] = matchingType.id; 
+            } else {
+                console.warn(`Could not find User Type ID for '${targetTypeName}'. Check collection names.`);
+                // Fallback? Might fail if required.
+            }
+
             // Type specific fields
             if (type === 'agent' && formData.brokerage) {
-                fields['company'] = formData.brokerage; 
+                fields['brokerage'] = formData.brokerage; 
             } 
             
             if (type === 'affiliate' && formData.category) {
+                // Assuming HTML values are IDs, or this will fail
                 fields['categories'] = [formData.category]; 
             }
 
             const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items/live`;
+
+            debugger;
             
             $.ajax({
                 url: url,
