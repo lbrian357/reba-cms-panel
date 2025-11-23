@@ -1,10 +1,12 @@
 const PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba";
+// Update this to point to your PROXY app URL (where createPortalSession lives)
+// If it's the same base URL, keep it. If different, update it.
+const BILLING_PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba"; 
+
 const SITE_ID = "5cef42a5323d3a463877056f";
 const USERS_COLLECTION_ID = "6782edb1ca16eb93e3bf40b5";
 const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
-// NEW: User Types Collection ID (for looking up Agent/Affiliate IDs)
 const USER_TYPES_COLLECTION_ID = "6898242371de0de33b215c88"; 
-// NEW: Brokerages Collection ID
 const BROKERAGES_COLLECTION_ID = "5d1c4a6720876632e4d52d6f";
 
 // --- CONFIGURATION FOR NEW ACCOUNTS ---
@@ -23,52 +25,91 @@ const ACCOUNT_CONFIG = {
 
 // Main library object
 var rebaLib = {
-  // --- Create Account Logic (New) ---
+  user: null, // Store current user data here
+
+  // --- Billing Portal Logic (New) ---
+  billingPortal: {
+    init: function() {
+      // Attach click listener to all current and future .billing-portal elements
+      $(document).on("click", ".billing-portal", function(e) {
+        e.preventDefault();
+        rebaLib.billingPortal.handleOpenPortal(this);
+      });
+    },
+
+    handleOpenPortal: function(buttonElement) {
+        const $btn = $(buttonElement);
+        const originalText = $btn.text();
+        
+        // 1. Check if we have the Stripe ID
+        // We look in rebaLib.user (populated by fetchUserProfile)
+        if (!rebaLib.user || !rebaLib.user.fieldData['stripe-customer-id']) {
+            alert("Billing information not found. Please contact support.");
+            return;
+        }
+
+        const customerId = rebaLib.user.fieldData['stripe-customer-id'];
+        $btn.text("Loading...").css("pointer-events", "none");
+
+        // 2. Call Lambda to get Session URL
+        const portalUrl = `${BILLING_PROXY_URL}/create-portal-session`; 
+        
+        $.ajax({
+            url: portalUrl,
+            method: "POST",
+            contentType: "application/json",
+            data: JSON.stringify({
+                customer: customerId,
+                return_url: window.location.href // Return to current page
+            }),
+            success: function(response) {
+                // 3. Redirect
+                if (response.url) {
+                    window.location.href = response.url;
+                } else {
+                    alert("Failed to generate billing session.");
+                    $btn.text(originalText).css("pointer-events", "auto");
+                }
+            },
+            error: function(err) {
+                console.error("Billing Portal Error:", err);
+                alert("Could not open billing portal. Please try again.");
+                $btn.text(originalText).css("pointer-events", "auto");
+            }
+        });
+    }
+  },
+
+  // --- Create Account Logic ---
   createAccountPage: {
-    type: null, // 'agent' or 'affiliate'
-    userTypes: [], // Store fetched user types here
+    type: null, 
+    userTypes: [],
 
     init: function (type) {
       console.log(`Create ${type} account page loaded.`);
       this.type = type;
       
-      // 1. PRE-FETCH User Types immediately so we have the IDs ready
       rebaLib.api.fetchAllUserTypes((types) => {
           this.userTypes = types;
-          console.log("User Types Loaded:", this.userTypes);
       });
 
-      // 2. PRE-FETCH & POPULATE DROPDOWNS based on account type
       if (type === 'agent') {
           rebaLib.api.fetchAllBrokerages((brokerages) => {
               const $select = $("#brokerage");
               $select.empty();
               $select.append('<option value="" disabled selected hidden>Select Your Brokerage</option>');
-              
               brokerages.forEach(b => {
-                  // For Agent page, value matches the Name
-                  $select.append($("<option>", {
-                      value: b.fieldData.name, 
-                      text: b.fieldData.name
-                  }));
+                  $select.append($("<option>", { value: b.fieldData.name, text: b.fieldData.name }));
               });
-              console.log(`Populated ${brokerages.length} brokerages.`);
           });
       } else if (type === 'affiliate') {
-          // --- ADDED: Fetch User Categories for Affiliate Page ---
           rebaLib.api.fetchAllUserCategories((categories) => {
               const $select = $("#category");
               $select.empty();
               $select.append('<option value="" disabled selected hidden>Select Main Category</option>');
-              
               categories.forEach(c => {
-                  // For Affiliate page, value matches the ID (for reference field)
-                  $select.append($("<option>", {
-                      value: c.id, 
-                      text: c.fieldData.name
-                  }));
+                  $select.append($("<option>", { value: c.id, text: c.fieldData.name }));
               });
-              console.log(`Populated ${categories.length} categories.`);
           });
       }
       
@@ -77,24 +118,14 @@ var rebaLib = {
       
       if ($originalForm.length === 0) return;
 
-      // --- THE ANTI-HIJACK FIX ---
-      // 1. Remove the attribute that attracts Memberstack (just in case)
       $originalForm.removeAttr('data-ms-form');
-
-      // 2. CLONE THE FORM to strip all native event listeners (Memberstack's listeners)
       const originalNode = $originalForm[0];
       const clonedNode = originalNode.cloneNode(true);
-      
-      // 3. Replace the original 'infected' form with our clean clone in the DOM
       originalNode.parentNode.replaceChild(clonedNode, originalNode);
       
-      console.log("Form cloned and replaced to strip Memberstack listeners.");
-
-      // 4. Bind OUR handler to the new, clean clone
       $(clonedNode).on("submit", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        console.log("Custom submit handler triggered!"); 
         rebaLib.createAccountPage.handleSignup(this);
       });
     },
@@ -104,53 +135,41 @@ var rebaLib = {
       const $submitBtn = $form.find('input[type="submit"]');
       const originalBtnText = $submitBtn.val();
       
-      // 1. Validate Form
       if (!formElement.checkValidity()) {
         formElement.reportValidity();
         return; 
       }
       
-      // 2. Validate that we successfully fetched User Types
       if (!this.userTypes || this.userTypes.length === 0) {
-          console.warn("User types not yet loaded. Retrying fetch...");
-          alert("System is initializing. Please wait 2 seconds and try again.");
-          // Retry fetching just in case it failed silently
           rebaLib.api.fetchAllUserTypes((types) => { this.userTypes = types; });
+          alert("System is initializing. Please wait 2 seconds and try again.");
           return;
       }
 
       $submitBtn.val("Creating Account...").prop("disabled", true);
 
       try {
-        // 3. Gather Data
         const formData = {
           firstName: $("#first-name").val().trim(),
           lastName: $("#last-name").val().trim(),
           email: $("#email").val().trim(),
           phone: $("#phone").val().trim(),
           password: $("#password").val(),
-          // Specific fields - handle empty values
           brokerage: $("#brokerage").val() || "", 
           category: $("#category").val() || ""    
         };
 
-        // 4. Create Webflow User (Pass userTypes to help lookup IDs)
         console.log("Creating Webflow User...");
         const webflowUser = await rebaLib.api.createWebflowUser(formData, this.type, this.userTypes);
         console.log("Webflow User Created:", webflowUser);
 
-        // 5. Create Memberstack Member
         console.log("Creating Memberstack Member...");
         const member = await rebaLib.api.createMemberstackMember(formData, webflowUser.slug, this.type);
         console.log("Memberstack Member Created:", member);
 
-        // 6. Redirect to Stripe
         const stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
         const encodedEmail = encodeURIComponent(formData.email);
-        
-        // Pass the Webflow ID as client_reference_id so webhook knows who paid
         const clientRefId = webflowUser.id; 
-        
         const finalStripeUrl = `${stripeBaseUrl}?locked_prefilled_email=${encodedEmail}&client_reference_id=${clientRefId}`; 
         
         console.log("Redirecting to:", finalStripeUrl);
@@ -159,7 +178,6 @@ var rebaLib = {
       } catch (error) {
         console.error("Signup Error:", error);
         let errorMsg = "An error occurred during signup.";
-        
         if (typeof error === 'string') {
             errorMsg = error;
         } else if (error.message) {
@@ -169,14 +187,13 @@ var rebaLib = {
                 errorMsg += " " + error.message;
              }
         }
-        
         alert(errorMsg);
         $submitBtn.val(originalBtnText).prop("disabled", false);
       }
     }
   },
 
-  // --- Profile Page Logic (Existing) ---
+  // --- Profile Page Logic ---
   profilePage: {
     quillInstance: null, 
     allCategories: [], 
@@ -216,6 +233,9 @@ var rebaLib = {
         rebaLib.utils.showNotification("User data not found.", true);
         return;
       }
+
+      // NEW: Store user globally so Billing Portal can access Stripe ID
+      rebaLib.user = user; 
 
       const fieldData = user.fieldData;
       $("#wf-form-Edit-User-Form").data("webflow-item-id", user.id);
@@ -371,7 +391,6 @@ var rebaLib = {
 
   // --- API Calls ---
   api: {
-    // NEW: Fetch All User Types
     fetchAllUserTypes: function(callback) {
       const allTypes = [];
       const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USER_TYPES_COLLECTION_ID}/items/live?limit=100`;
@@ -385,7 +404,6 @@ var rebaLib = {
       );
     },
 
-    // NEW: Fetch All Brokerages (Paginated)
     fetchAllBrokerages: function(callback) {
       const allBrokerages = [];
       const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${BROKERAGES_COLLECTION_ID}/items/live?limit=100`;
@@ -394,7 +412,6 @@ var rebaLib = {
         (items) => { allBrokerages.push(...items); },
         0,
         () => {
-            // Sort alphabetically
             allBrokerages.sort((a, b) => {
                 const nameA = (a.fieldData.name || "").toLowerCase();
                 const nameB = (b.fieldData.name || "").toLowerCase();
@@ -405,12 +422,10 @@ var rebaLib = {
       );
     },
 
-    // UPDATED: Create Webflow User (Now accepts userTypes list)
     createWebflowUser: function(formData, type, userTypes) {
         return new Promise((resolve, reject) => {
             const fullName = `${formData.firstName} ${formData.lastName}`;
             
-            // Base data structure
             const fields = {
                 "name": fullName,
                 "slug": rebaLib.utils.slugify(fullName), 
@@ -422,34 +437,26 @@ var rebaLib = {
                 "_draft": false
             };
 
-            // --- NEW: Find the Correct User Type ID ---
             let targetTypeName = "";
-            // Ensure these names match EXACTLY with your Webflow 'User Types' items
             if (type === 'agent') targetTypeName = "Agent";
             if (type === 'affiliate') targetTypeName = "Affiliate";
             
             const matchingType = userTypes.find(t => t.fieldData.name === targetTypeName);
             
             if (matchingType) {
-                // Webflow Reference Fields require the Item ID
-                // If your field slug is 'user-type', change 'type' below to 'user-type'
                 fields['type'] = matchingType.id; 
             } else {
-                console.warn(`Could not find User Type ID for '${targetTypeName}'. Check collection names.`);
+                console.warn(`Could not find User Type ID for '${targetTypeName}'.`);
             }
 
-            // Type specific fields - MAINTAINING YOUR CUSTOM LOGIC
             if (type === 'agent' && formData.brokerage) {
-                fields['brokerage'] = formData.brokerage;
-                fields['company'] = formData.brokerage;
+                fields['brokerage'] = formData.brokerage; 
             } 
             
             if (type === 'affiliate' && formData.category) {
-                // Assuming HTML values are IDs, or this will fail
                 fields['categories'] = [formData.category]; 
             }
 
-            // YOUR CHANGE: Kept the /live endpoint
             const url = `${PROXY_URL}/https://api.webflow.com/v2/collections/${USERS_COLLECTION_ID}/items/live`;
             
             $.ajax({
@@ -477,7 +484,6 @@ var rebaLib = {
                             if (response.error) errorMsg += " " + response.error;
                         }
                     } catch(e) {
-                        console.error("Could not parse error response:", e);
                         errorMsg += " (Server returned: " + status + ")";
                     }
                     reject(new Error(errorMsg));
@@ -486,15 +492,12 @@ var rebaLib = {
         });
     },
 
-    // NEW: Create Memberstack Member
     createMemberstackMember: function(formData, webflowSlug, type) {
         return new Promise((resolve, reject) => {
-            // Wait for Memberstack to be available (Retry Loop)
             let attempts = 0;
-            const maxAttempts = 50; // 5 seconds max wait
+            const maxAttempts = 50; 
             
             const waitForMs = setInterval(() => {
-                // CHANGED: Using specific 'signupMemberEmailPassword' as found in console dump
                 if (window.$memberstackDom && typeof window.$memberstackDom.signupMemberEmailPassword === 'function') {
                     clearInterval(waitForMs);
                     executeSignup();
@@ -531,7 +534,6 @@ var rebaLib = {
         });
     },
 
-    // ... (Existing API methods omitted for brevity - assume they exist) ...
     fetchAllPaginated: function (url, processData, offset = 0, callback = null) {
       $.ajax({
         url: `${url}&offset=${offset}`,
@@ -619,12 +621,13 @@ var rebaLib = {
           $.ajax({
             url: `${PROXY_URL}/https://api.webflow.com/v2/sites/${SITE_ID}/assets`,
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+            },
             data: JSON.stringify({
               fileHash: md5Hash,
               fileName: file.name,
               contentType: file.type,
-              // parentFolder: "69164778bebb5bda1bf45e85", // Optional
             }),
             success: function (response) {
               const formData = new FormData();
@@ -665,6 +668,7 @@ var rebaLib = {
 
   // --- Utility Functions ---
   utils: {
+    // --- RESTORED SLUGIFY FUNCTION ---
     slugify: function(text) {
       return text.toString().toLowerCase()
         .replace(/\s+/g, '-')           // Replace spaces with -
@@ -676,9 +680,14 @@ var rebaLib = {
 
     getMemberSlug: function (callback) {
       let attempts = 0;
-      const maxAttempts = 50; 
+      const maxAttempts = 50; // Wait 5 seconds
+      
+      // We look for [data-ms-member='wf-users-slug']
+      // *** You must add this element to your page, e.g.:
+      // <div data-ms-member="wf-users-slug" style="display:none;"></div>
       const check = setInterval(function () {
         const $slugEl = $("[data-ms-member='wf-users-slug']");
+        
         if ($slugEl.length > 0 && $slugEl.text().trim() !== "") {
           clearInterval(check);
           callback($slugEl.text().trim());
@@ -692,16 +701,28 @@ var rebaLib = {
     },
 
     showNotification: function (message, isError) {
+      // Remove any existing notification
       $(".reba-notification").remove();
+
       const color = isError ? "#E57373" : "#81C784";
       const $notification = $(
         '<div class="reba-notification">' + message + "</div>"
       );
+
       $notification.css({
-        position: "fixed", top: "0", left: "0", width: "100%", padding: "12px",
-        "background-color": color, color: "white", "text-align": "center",
-        "font-size": "16px", "z-index": "9999", display: "none",
+        position: "fixed",
+        top: "0",
+        left: "0",
+        width: "100%",
+        padding: "12px",
+        "background-color": color,
+        color: "white",
+        "text-align": "center",
+        "font-size": "16px",
+        "z-index": "9999",
+        display: "none",
       });
+
       $("body").append($notification);
       $notification.slideDown(300).delay(3000).slideUp(300, function () {
         $(this).remove();
@@ -709,61 +730,110 @@ var rebaLib = {
     },
     
     injectDependencies: function () {
+      // SparkMD5 is required for the new upload function
       if (typeof SparkMD5 === 'undefined') {
-        $("head").append('<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>');
+        const scriptTagForSparkMD5 = '<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>';
+        $("head").append(scriptTagForSparkMD5);
       }
+      
+      // Quill Rich Text Editor
       if (typeof Quill === 'undefined') {
-        $("head").append('<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">');
-        $("head").append('<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>');
+        const quillCssLink = '<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">';
+        const quillJsScript = '<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>';
+        $("head").append(quillCssLink);
+        $("head").append(quillJsScript);
       }
+      
+      // @nobleclem/jquery-multiselect
       if (typeof $.fn.multiselect === 'undefined') {
-        $("head").append('<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>');
-        $("head").append('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">');
+        const scriptTagForMultiselect =
+          '<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>';
+        const cssLinkForMultiselect =
+          '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">';
+        $("head").append(scriptTagForMultiselect);
+        $("head").append(cssLinkForMultiselect);
       }
     },
     
     waitForQuill: function(callback) {
         let attempts = 0;
+        const maxAttempts = 100; // Wait 10 seconds
+        
         const check = setInterval(function () {
-            if (typeof Quill !== 'undefined') { clearInterval(check); callback(); }
-            else if (attempts > 100) { clearInterval(check); console.error("Quill failed."); }
+            if (typeof Quill !== 'undefined') {
+                clearInterval(check);
+                callback();
+            } else if (attempts > maxAttempts) {
+                clearInterval(check);
+                console.error("Quill.js failed to load.");
+            }
             attempts++;
         }, 100);
     },
     
     waitForMultiSelect: function(callback) {
         let attempts = 0;
+        const maxAttempts = 100; // Wait 10 seconds
+        
         const check = setInterval(function () {
-            if (typeof $.fn.multiselect !== 'undefined') { clearInterval(check); callback(); }
-            else if (attempts > 100) { clearInterval(check); console.error("Multiselect failed."); }
+            if (typeof $.fn.multiselect !== 'undefined') {
+                clearInterval(check);
+                callback();
+            } else if (attempts > maxAttempts) {
+                clearInterval(check);
+                console.error("jquery.multiselect.js failed to load.");
+            }
             attempts++;
         }, 100);
     },
     
     initRichTextEditor: function (editorId, placeholder, content) {
+        // This is the corrected function, modeled on your main.js
+        
+        // Find the element to replace
         const $editor = $(`#${editorId}`);
         if (!$editor.length) return null;
+
+        // Create the new div with the same ID and existing content
         const $editorDiv = $(`<div id="${editorId}">${content}</div>`);
+        
+        // Copy classes from the old textarea to the new div
         $editorDiv.attr('class', $editor.attr('class'));
+        
+        // Replace the textarea with the new div
         $editor.replaceWith($editorDiv);
+
         const quill = new Quill(`#${editorId}`, {
-            modules: { toolbar: [["bold", "italic", "underline"]] },
-            placeholder: placeholder, theme: "snow",
+            modules: {
+              toolbar: [["bold", "italic", "underline"]], // Simple toolbar
+            },
+            placeholder: placeholder,
+            theme: "snow",
         });
+        
         return quill;
     },
     
     cleanQuillHTML: function (innerHTML) {
-      if (innerHTML === "<p><br></p>") return "";
+      // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
+      // Webflow rich text fields often prefer just <p> tags.
+      if (innerHTML === "<p><br></p>") {
+        return "";
+      }
+      // Remove the cursor span elements from Quill editor innerHTML
       return innerHTML.replace(/<span class="ql-cursor">.*?<\/span>/g, "");
     }
   },
 };
 
 // --- Initializer ---
+// Runs the script based on the current page.
 $(document).ready(function () {
   const path = window.location.pathname;
   
+  // Initialize based on current page
+  rebaLib.billingPortal.init(); // Initialize billing listener globally or specifically
+
   if (path === "/account/profile") {
     rebaLib.profilePage.init();
   } else if (path === "/create-agent-account") {
