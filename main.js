@@ -167,8 +167,7 @@ var rebaLib = {
 
       try {
         const formData = {
-          firstName: $("#first-name").val().trim(),
-          lastName: $("#last-name").val().trim(),
+          name: $("name").val().trim(),
           email: $("#email").val().trim(),
           phone: $("#phone").val().trim(),
           password: $("#password").val(),
@@ -254,8 +253,7 @@ var rebaLib = {
       const fieldData = user.fieldData;
       $("#wf-form-Edit-User-Form").data("webflow-item-id", user.id);
       
-      $("#user-first-name").val(fieldData["first-name"] || "");
-      $("#user-last-name").val(fieldData["last-name"] || "");
+      $("#user-name").val(fieldData["name"] || "");
       $("#user-company").val(fieldData["company"] || "");
       $("#user-title").val(fieldData["title"] || "");
       $("#user-license-number").val(fieldData["license-number"] || "");
@@ -324,8 +322,7 @@ var rebaLib = {
 
       const dataToSave = {
         fieldData: {
-          "first-name": $("#user-first-name").val(),
-          "last-name": $("#user-last-name").val(),
+          "name": $("#user-name").val(),
           "company": $("#user-company").val(),
           "title": $("#user-title").val(),
           "license-number": $("#user-license-number").val(),
@@ -441,13 +438,12 @@ var rebaLib = {
 
     createWebflowUser: function(formData, type, userTypes) {
         return new Promise((resolve, reject) => {
-            const fullName = `${formData.firstName} ${formData.lastName}`;
+            const fullName = formData.name;
+            
             
             const fields = {
                 "name": fullName,
                 "slug": rebaLib.utils.slugify(fullName), 
-                "first-name": formData.firstName,
-                "last-name": formData.lastName,
                 "email": formData.email,
                 "phone": formData.phone,
                 "_archived": false,
@@ -531,9 +527,6 @@ var rebaLib = {
                     email: formData.email,
                     password: formData.password,
                     customFields: {
-                        "first-name": formData.firstName,
-                        "last-name": formData.lastName,
-                        "phone": formData.phone,
                         "wf-users-slug": webflowSlug, 
                         "account-type": type
                     },
