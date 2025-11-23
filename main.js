@@ -1,6 +1,5 @@
-const PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba";
-// Update this to point to your PROXY app URL (where createPortalSession lives)
-// If it's the same base URL, keep it. If different, update it.
+// --- UPDATED URLS TO MATCH SERVERLESS.YML ---
+const PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba/api"; 
 const BILLING_PROXY_URL = "https://gm7aeh9axa.execute-api.us-east-1.amazonaws.com/reba"; 
 
 const SITE_ID = "5cef42a5323d3a463877056f";
@@ -27,7 +26,7 @@ const ACCOUNT_CONFIG = {
 var rebaLib = {
   user: null, // Store current user data here
 
-  // --- Billing Portal Logic (New) ---
+  // --- Billing Portal Logic ---
   billingPortal: {
     init: function() {
       // Attach click listener to all current and future .billing-portal elements
@@ -41,8 +40,7 @@ var rebaLib = {
         const $btn = $(buttonElement);
         const originalText = $btn.text();
         
-        // 1. Check if we have the Stripe ID
-        // We look in rebaLib.user (populated by fetchUserProfile)
+        // 1. Check if we have the Stripe ID (from global user object)
         if (!rebaLib.user || !rebaLib.user.fieldData['stripe-customer-id']) {
             alert("Billing information not found. Please contact support.");
             return;
@@ -52,7 +50,8 @@ var rebaLib = {
         $btn.text("Loading...").css("pointer-events", "none");
 
         // 2. Call Lambda to get Session URL
-        const portalUrl = `${BILLING_PROXY_URL}/create-portal-session`; 
+        // Uses the BILLING_PROXY_URL base + /portal/session path defined in serverless.yml
+        const portalUrl = `${BILLING_PROXY_URL}/portal/session`; 
         
         $.ajax({
             url: portalUrl,
@@ -63,7 +62,6 @@ var rebaLib = {
                 return_url: window.location.href // Return to current page
             }),
             success: function(response) {
-                // 3. Redirect
                 if (response.url) {
                     window.location.href = response.url;
                 } else {
@@ -234,7 +232,6 @@ var rebaLib = {
         return;
       }
 
-      // NEW: Store user globally so Billing Portal can access Stripe ID
       rebaLib.user = user; 
 
       const fieldData = user.fieldData;
@@ -814,6 +811,11 @@ var rebaLib = {
         return quill;
     },
     
+    /**
+     * Cleans Quill's HTML output for saving to Webflow.
+     * @param {string} innerHTML - The innerHTML from quill.root.
+     * @returns {string} Cleaned HTML.
+     */
     cleanQuillHTML: function (innerHTML) {
       // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
       // Webflow rich text fields often prefer just <p> tags.
