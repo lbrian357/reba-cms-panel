@@ -26,6 +26,21 @@ const ACCOUNT_CONFIG = {
 var rebaLib = {
   user: null, // Store current user data here
 
+  // --- Global Initialization (Runs on every page) ---
+  globalInit: function() {
+      // 1. Initialize Billing Portal Listeners
+      rebaLib.billingPortal.init();
+
+      // 2. Fetch Current User Data (if logged in)
+      // We need this on EVERY page so the billing portal link works anywhere
+      rebaLib.utils.getMemberSlug(function (slug) {
+        if (slug) {
+          console.log("Member logged in, fetching profile...");
+          rebaLib.api.fetchUserProfile(slug);
+        }
+      });
+  },
+
   // --- Billing Portal Logic ---
   billingPortal: {
     init: function() {
@@ -42,7 +57,12 @@ var rebaLib = {
         
         // 1. Check if we have the Stripe ID (from global user object)
         if (!rebaLib.user || !rebaLib.user.fieldData['stripe-customer-id']) {
-            alert("Billing information not found. Please contact support.");
+            // Retry check: maybe user loaded late?
+            if (!rebaLib.user) {
+                 alert("Still loading user profile. Please try again in a moment.");
+            } else {
+                 alert("Billing information not found. Please contact support.");
+            }
             return;
         }
 
@@ -50,7 +70,6 @@ var rebaLib = {
         $btn.text("Loading...").css("pointer-events", "none");
 
         // 2. Call Lambda to get Session URL
-        // Uses the BILLING_PROXY_URL base + /portal/session path defined in serverless.yml
         const portalUrl = `${BILLING_PROXY_URL}/portal/session`; 
         
         $.ajax({
@@ -206,34 +225,33 @@ var rebaLib = {
           }
           rebaLib.profilePage.allCategories = categories;
 
-          rebaLib.utils.getMemberSlug(function (slug) {
-            if (!slug) {
-              rebaLib.utils.showNotification("Could not find Memberstack user slug.", true);
-              return;
-            }
-            
-            rebaLib.api.fetchUserProfile(slug);
-    
-            $("#save-user").on("click", function (e) {
+          // Logic here is just UI binding now, fetching happens globally
+          if (rebaLib.user) {
+             rebaLib.profilePage.populateForm(rebaLib.user);
+          } else {
+             // Wait for global fetch if not ready
+             const checkUser = setInterval(() => {
+                 if(rebaLib.user) {
+                     clearInterval(checkUser);
+                     rebaLib.profilePage.populateForm(rebaLib.user);
+                 }
+             }, 200);
+          }
+          
+          // Bind Save Button
+          $("#save-user").on("click", function (e) {
               e.preventDefault();
               rebaLib.profilePage.handleSaveProfile();
-            });
-    
-            $("#profile-pic-preview").on("click", function() {
+          });
+  
+          $("#profile-pic-preview").on("click", function() {
               rebaLib.profilePage.handleProfilePicUpload();
-            });
           });
       });
     },
 
     populateForm: function (user) {
-      if (!user) {
-        rebaLib.utils.showNotification("User data not found.", true);
-        return;
-      }
-
-      rebaLib.user = user; 
-
+      // Removed check here because init now guarantees user
       const fieldData = user.fieldData;
       $("#wf-form-Edit-User-Form").data("webflow-item-id", user.id);
       
@@ -576,13 +594,18 @@ var rebaLib = {
         method: "GET",
         success: function (response) {
           if (response.items && response.items.length > 0) {
-            rebaLib.profilePage.populateForm(response.items[0]);
+            // Store global user data for billing portal usage
+            rebaLib.user = response.items[0]; 
+            
+            // If we are on the profile page, populate the form
+            if (rebaLib.profilePage && typeof rebaLib.profilePage.populateForm === 'function') {
+               rebaLib.profilePage.populateForm(rebaLib.user);
+            }
           } else {
-            rebaLib.utils.showNotification("Could not find user profile in Webflow.", true);
+            // Handle case where user is not found
           }
         },
         error: function (error) {
-          rebaLib.utils.showNotification("Error fetching profile.", true);
           console.error("Fetch profile error:", error);
         },
       });
@@ -665,14 +688,13 @@ var rebaLib = {
 
   // --- Utility Functions ---
   utils: {
-    // --- RESTORED SLUGIFY FUNCTION ---
     slugify: function(text) {
       return text.toString().toLowerCase()
-        .replace(/\s+/g, '-')           // Replace spaces with -
-        .replace(/[^\w\-]+/g, '')       // Remove all non-word chars
-        .replace(/\-\-+/g, '-')         // Replace multiple - with single -
-        .replace(/^-+/, '')             // Trim - from start of text
-        .replace(/-+$/, '');            // Trim - from end of text
+        .replace(/\s+/g, '-')           
+        .replace(/[^\w\-]+/g, '')       
+        .replace(/\-\-+/g, '-')         
+        .replace(/^-+/, '')             
+        .replace(/-+$/, '');            
     },
 
     getMemberSlug: function (callback) {
@@ -680,8 +702,6 @@ var rebaLib = {
       const maxAttempts = 50; // Wait 5 seconds
       
       // We look for [data-ms-member='wf-users-slug']
-      // *** You must add this element to your page, e.g.:
-      // <div data-ms-member="wf-users-slug" style="display:none;"></div>
       const check = setInterval(function () {
         const $slugEl = $("[data-ms-member='wf-users-slug']");
         
@@ -690,7 +710,8 @@ var rebaLib = {
           callback($slugEl.text().trim());
         } else if (attempts > maxAttempts) {
           clearInterval(check);
-          console.error("Memberstack slug not found.");
+          // Only warn if on a page where this is critical, or handle gracefully
+          console.log("Memberstack slug not found or user not logged in.");
           callback(null);
         }
         attempts++;
@@ -698,7 +719,6 @@ var rebaLib = {
     },
 
     showNotification: function (message, isError) {
-      // Remove any existing notification
       $(".reba-notification").remove();
 
       const color = isError ? "#E57373" : "#81C784";
@@ -727,42 +747,27 @@ var rebaLib = {
     },
     
     injectDependencies: function () {
-      // SparkMD5 is required for the new upload function
       if (typeof SparkMD5 === 'undefined') {
-        const scriptTagForSparkMD5 = '<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>';
-        $("head").append(scriptTagForSparkMD5);
+        $("head").append('<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>');
       }
-      
-      // Quill Rich Text Editor
       if (typeof Quill === 'undefined') {
-        const quillCssLink = '<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">';
-        const quillJsScript = '<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>';
-        $("head").append(quillCssLink);
-        $("head").append(quillJsScript);
+        $("head").append('<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">');
+        $("head").append('<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>');
       }
-      
-      // @nobleclem/jquery-multiselect
       if (typeof $.fn.multiselect === 'undefined') {
-        const scriptTagForMultiselect =
-          '<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>';
-        const cssLinkForMultiselect =
-          '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">';
-        $("head").append(scriptTagForMultiselect);
-        $("head").append(cssLinkForMultiselect);
+        $("head").append('<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>');
+        $("head").append('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">');
       }
     },
     
     waitForQuill: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; // Wait 10 seconds
-        
         const check = setInterval(function () {
             if (typeof Quill !== 'undefined') {
                 clearInterval(check);
                 callback();
-            } else if (attempts > maxAttempts) {
+            } else if (attempts > 100) {
                 clearInterval(check);
-                console.error("Quill.js failed to load.");
             }
             attempts++;
         }, 100);
@@ -770,39 +775,28 @@ var rebaLib = {
     
     waitForMultiSelect: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; // Wait 10 seconds
-        
         const check = setInterval(function () {
             if (typeof $.fn.multiselect !== 'undefined') {
                 clearInterval(check);
                 callback();
-            } else if (attempts > maxAttempts) {
+            } else if (attempts > 100) {
                 clearInterval(check);
-                console.error("jquery.multiselect.js failed to load.");
             }
             attempts++;
         }, 100);
     },
     
     initRichTextEditor: function (editorId, placeholder, content) {
-        // This is the corrected function, modeled on your main.js
-        
-        // Find the element to replace
         const $editor = $(`#${editorId}`);
         if (!$editor.length) return null;
 
-        // Create the new div with the same ID and existing content
         const $editorDiv = $(`<div id="${editorId}">${content}</div>`);
-        
-        // Copy classes from the old textarea to the new div
         $editorDiv.attr('class', $editor.attr('class'));
-        
-        // Replace the textarea with the new div
         $editor.replaceWith($editorDiv);
 
         const quill = new Quill(`#${editorId}`, {
             modules: {
-              toolbar: [["bold", "italic", "underline"]], // Simple toolbar
+              toolbar: [["bold", "italic", "underline"]],
             },
             placeholder: placeholder,
             theme: "snow",
@@ -811,18 +805,10 @@ var rebaLib = {
         return quill;
     },
     
-    /**
-     * Cleans Quill's HTML output for saving to Webflow.
-     * @param {string} innerHTML - The innerHTML from quill.root.
-     * @returns {string} Cleaned HTML.
-     */
     cleanQuillHTML: function (innerHTML) {
-      // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
-      // Webflow rich text fields often prefer just <p> tags.
       if (innerHTML === "<p><br></p>") {
         return "";
       }
-      // Remove the cursor span elements from Quill editor innerHTML
       return innerHTML.replace(/<span class="ql-cursor">.*?<\/span>/g, "");
     }
   },
@@ -833,8 +819,9 @@ var rebaLib = {
 $(document).ready(function () {
   const path = window.location.pathname;
   
-  // Initialize based on current page
-  rebaLib.billingPortal.init(); // Initialize billing listener globally or specifically
+  // 1. Initialize Billing Portal listeners everywhere
+  //    (This just attaches the click event, logic inside handles user check)
+  rebaLib.globalInit();
 
   if (path === "/account/profile") {
     rebaLib.profilePage.init();
