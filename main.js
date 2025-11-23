@@ -218,27 +218,16 @@ var rebaLib = {
       console.log("Profile page script loaded.");
       rebaLib.utils.injectDependencies();
 
+      // Only fetch categories here. 
+      // User profile fetching happens in globalInit() which calls api.fetchUserProfile().
       rebaLib.api.fetchAllUserCategories(function(categories) {
           if (!categories) {
               rebaLib.utils.showNotification("Could not load user categories.", true);
               return;
           }
           rebaLib.profilePage.allCategories = categories;
-
-          // Logic here is just UI binding now, fetching happens globally
-          if (rebaLib.user) {
-             rebaLib.profilePage.populateForm(rebaLib.user);
-          } else {
-             // Wait for global fetch if not ready
-             const checkUser = setInterval(() => {
-                 if(rebaLib.user) {
-                     clearInterval(checkUser);
-                     rebaLib.profilePage.populateForm(rebaLib.user);
-                 }
-             }, 200);
-          }
           
-          // Bind Save Button
+          // Bind Save Button (Logic only runs if button exists)
           $("#save-user").on("click", function (e) {
               e.preventDefault();
               rebaLib.profilePage.handleSaveProfile();
@@ -247,11 +236,21 @@ var rebaLib = {
           $("#profile-pic-preview").on("click", function() {
               rebaLib.profilePage.handleProfilePicUpload();
           });
+          
+          // If user was already fetched by globalInit before categories loaded,
+          // populate the form now.
+          if (rebaLib.user) {
+             rebaLib.profilePage.populateForm(rebaLib.user);
+          }
       });
     },
 
     populateForm: function (user) {
-      // Removed check here because init now guarantees user
+      // Check if we are actually on the profile page before trying to populate
+      if ($("#wf-form-Edit-User-Form").length === 0) {
+          return; 
+      }
+
       const fieldData = user.fieldData;
       $("#wf-form-Edit-User-Form").data("webflow-item-id", user.id);
       
@@ -290,22 +289,25 @@ var rebaLib = {
       const $categoriesSelect = $("#user-categories");
       $categoriesSelect.empty(); 
       
-      rebaLib.profilePage.allCategories.forEach(function (category) {
-        $categoriesSelect.append(
-          $("<option>", {
-            value: category.id,
-            text: category.fieldData.name || "Unnamed Category",
-          })
-        );
-      });
-      
-      $categoriesSelect.val(fieldData["categories"] || []);
-
-      rebaLib.utils.waitForMultiSelect(function() {
-        $categoriesSelect.multiselect({
-            maxHeight: 200,
-        });
-      });
+      // Use the stored categories
+      if (rebaLib.profilePage.allCategories.length > 0) {
+          rebaLib.profilePage.allCategories.forEach(function (category) {
+            $categoriesSelect.append(
+              $("<option>", {
+                value: category.id,
+                text: category.fieldData.name || "Unnamed Category",
+              })
+            );
+          });
+          
+          $categoriesSelect.val(fieldData["categories"] || []);
+    
+          rebaLib.utils.waitForMultiSelect(function() {
+            $categoriesSelect.multiselect({
+                maxHeight: 200,
+            });
+          });
+      }
     },
 
     handleSaveProfile: function () {
@@ -598,7 +600,11 @@ var rebaLib = {
             rebaLib.user = response.items[0]; 
             
             // If we are on the profile page, populate the form
+            // Updated: Call populate only if function exists and we haven't already populated
             if (rebaLib.profilePage && typeof rebaLib.profilePage.populateForm === 'function') {
+               // NOTE: profilePage.init might have already populated if user loaded early.
+               // But re-running populate is safer than missing data.
+               // We rely on the form check inside populateForm to not crash.
                rebaLib.profilePage.populateForm(rebaLib.user);
             }
           } else {
@@ -688,6 +694,7 @@ var rebaLib = {
 
   // --- Utility Functions ---
   utils: {
+    // --- RESTORED SLUGIFY FUNCTION ---
     slugify: function(text) {
       return text.toString().toLowerCase()
         .replace(/\s+/g, '-')           
@@ -719,6 +726,7 @@ var rebaLib = {
     },
 
     showNotification: function (message, isError) {
+      // Remove any existing notification
       $(".reba-notification").remove();
 
       const color = isError ? "#E57373" : "#81C784";
@@ -747,27 +755,42 @@ var rebaLib = {
     },
     
     injectDependencies: function () {
+      // SparkMD5 is required for the new upload function
       if (typeof SparkMD5 === 'undefined') {
-        $("head").append('<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>');
+        const scriptTagForSparkMD5 = '<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>';
+        $("head").append(scriptTagForSparkMD5);
       }
+      
+      // Quill Rich Text Editor
       if (typeof Quill === 'undefined') {
-        $("head").append('<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">');
-        $("head").append('<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>');
+        const quillCssLink = '<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">';
+        const quillJsScript = '<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>';
+        $("head").append(quillCssLink);
+        $("head").append(quillJsScript);
       }
+      
+      // @nobleclem/jquery-multiselect
       if (typeof $.fn.multiselect === 'undefined') {
-        $("head").append('<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>');
-        $("head").append('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">');
+        const scriptTagForMultiselect =
+          '<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>';
+        const cssLinkForMultiselect =
+          '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">';
+        $("head").append(scriptTagForMultiselect);
+        $("head").append(cssLinkForMultiselect);
       }
     },
     
     waitForQuill: function(callback) {
         let attempts = 0;
+        const maxAttempts = 100; // Wait 10 seconds
+        
         const check = setInterval(function () {
             if (typeof Quill !== 'undefined') {
                 clearInterval(check);
                 callback();
             } else if (attempts > 100) {
                 clearInterval(check);
+                console.error("Quill.js failed to load.");
             }
             attempts++;
         }, 100);
@@ -775,28 +798,45 @@ var rebaLib = {
     
     waitForMultiSelect: function(callback) {
         let attempts = 0;
+        const maxAttempts = 100; // Wait 10 seconds
+        
         const check = setInterval(function () {
             if (typeof $.fn.multiselect !== 'undefined') {
                 clearInterval(check);
                 callback();
             } else if (attempts > 100) {
                 clearInterval(check);
+                console.error("jquery.multiselect.js failed to load.");
             }
             attempts++;
         }, 100);
     },
     
     initRichTextEditor: function (editorId, placeholder, content) {
-        const $editor = $(`#${editorId}`);
-        if (!$editor.length) return null;
+        const $element = $(`#${editorId}`);
+        if (!$element.length) return null;
 
+        // GUARD CLAUSE: Only initialize if it's a textarea.
+        // If it's a DIV, Quill has likely already replaced it.
+        if (!$element.is('textarea')) {
+            console.warn(`Element #${editorId} is not a textarea. Skipping Quill init to prevent duplicates.`);
+            // Attempt to return existing instance if possible, or just null
+            const el = document.getElementById(editorId);
+            return typeof Quill !== 'undefined' ? Quill.find(el) : null;
+        }
+
+        // Create the new div with the same ID and existing content
         const $editorDiv = $(`<div id="${editorId}">${content}</div>`);
-        $editorDiv.attr('class', $editor.attr('class'));
-        $editor.replaceWith($editorDiv);
+        
+        // Copy classes from the old textarea to the new div
+        $editorDiv.attr('class', $element.attr('class'));
+        
+        // Replace the textarea with the new div
+        $element.replaceWith($editorDiv);
 
         const quill = new Quill(`#${editorId}`, {
             modules: {
-              toolbar: [["bold", "italic", "underline"]],
+              toolbar: [["bold", "italic", "underline"]], // Simple toolbar
             },
             placeholder: placeholder,
             theme: "snow",
@@ -805,10 +845,18 @@ var rebaLib = {
         return quill;
     },
     
+    /**
+     * Cleans Quill's HTML output for saving to Webflow.
+     * @param {string} innerHTML - The innerHTML from quill.root.
+     * @returns {string} Cleaned HTML.
+     */
     cleanQuillHTML: function (innerHTML) {
+      // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
+      // Webflow rich text fields often prefer just <p> tags.
       if (innerHTML === "<p><br></p>") {
         return "";
       }
+      // Remove the cursor span elements from Quill editor innerHTML
       return innerHTML.replace(/<span class="ql-cursor">.*?<\/span>/g, "");
     }
   },
