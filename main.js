@@ -440,7 +440,8 @@ var rebaLib = {
 
             // Type specific fields - MAINTAINING YOUR CUSTOM LOGIC
             if (type === 'agent' && formData.brokerage) {
-                fields['brokerage'] = formData.brokerage; // YOUR CHANGE: Kept as 'brokerage'
+                fields['brokerage'] = formData.brokerage;
+                fields['company'] = formData.brokerage;
             } 
             
             if (type === 'affiliate' && formData.category) {
