@@ -167,7 +167,7 @@ var rebaLib = {
 
       try {
         const formData = {
-          name: $("name").val().trim(),
+          name: $("#full-name").val().trim(),
           email: $("#email").val().trim(),
           phone: $("#phone").val().trim(),
           password: $("#password").val(),
@@ -253,7 +253,7 @@ var rebaLib = {
       const fieldData = user.fieldData;
       $("#wf-form-Edit-User-Form").data("webflow-item-id", user.id);
       
-      $("#user-name").val(fieldData["name"] || "");
+      $("#user-full-name").val(fieldData["name"] || "");
       $("#user-company").val(fieldData["company"] || "");
       $("#user-title").val(fieldData["title"] || "");
       $("#user-license-number").val(fieldData["license-number"] || "");
@@ -322,7 +322,7 @@ var rebaLib = {
 
       const dataToSave = {
         fieldData: {
-          "name": $("#user-name").val(),
+          "name": $("#user-full-name").val(),
           "company": $("#user-company").val(),
           "title": $("#user-title").val(),
           "license-number": $("#user-license-number").val(),
