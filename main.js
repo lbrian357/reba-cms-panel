@@ -32,11 +32,18 @@ var rebaLib = {
       rebaLib.billingPortal.init();
 
       // 2. Fetch Current User Data (if logged in)
-      // We need this on EVERY page so the billing portal link works anywhere
       rebaLib.utils.getMemberSlug(function (slug) {
         if (slug) {
           console.log("Member logged in, fetching profile...");
           rebaLib.api.fetchUserProfile(slug);
+          
+          // 3. Update 'View Profile' button links
+          const profileUrl = `https://www.lajollareba.com/user/${slug}`;
+          // Updates any <a> tag with this ID to point to the public profile
+          const $viewProfileBtn = $("#view-profile-btn");
+          if ($viewProfileBtn.length) {
+              $viewProfileBtn.attr("href", profileUrl);
+          }
         }
       });
   },
@@ -44,7 +51,6 @@ var rebaLib = {
   // --- Billing Portal Logic ---
   billingPortal: {
     init: function() {
-      // Attach click listener to all current and future .billing-portal elements
       $(document).on("click", ".billing-portal", function(e) {
         e.preventDefault();
         rebaLib.billingPortal.handleOpenPortal(this);
@@ -55,9 +61,7 @@ var rebaLib = {
         const $btn = $(buttonElement);
         const originalText = $btn.text();
         
-        // 1. Check if we have the Stripe ID (from global user object)
         if (!rebaLib.user || !rebaLib.user.fieldData['stripe-customer-id']) {
-            // Retry check: maybe user loaded late?
             if (!rebaLib.user) {
                  alert("Still loading user profile. Please try again in a moment.");
             } else {
@@ -69,7 +73,6 @@ var rebaLib = {
         const customerId = rebaLib.user.fieldData['stripe-customer-id'];
         $btn.text("Loading...").css("pointer-events", "none");
 
-        // 2. Call Lambda to get Session URL
         const portalUrl = `${BILLING_PROXY_URL}/portal/session`; 
         
         $.ajax({
@@ -78,7 +81,7 @@ var rebaLib = {
             contentType: "application/json",
             data: JSON.stringify({
                 customer: customerId,
-                return_url: window.location.href // Return to current page
+                return_url: window.location.href
             }),
             success: function(response) {
                 if (response.url) {
@@ -217,16 +220,13 @@ var rebaLib = {
       console.log("Profile page script loaded.");
       rebaLib.utils.injectDependencies();
 
-      // Only fetch categories here. 
-      // User profile fetching happens in globalInit() which calls api.fetchUserProfile().
       rebaLib.api.fetchAllUserCategories(function(categories) {
           if (!categories) {
-              rebaLib.utils.showNotification("Could not load user categories.", true);
+              alert("Could not load user categories.");
               return;
           }
           rebaLib.profilePage.allCategories = categories;
           
-          // Bind Save Button (Logic only runs if button exists)
           $("#save-user").on("click", function (e) {
               e.preventDefault();
               rebaLib.profilePage.handleSaveProfile();
@@ -236,8 +236,6 @@ var rebaLib = {
               rebaLib.profilePage.handleProfilePicUpload();
           });
           
-          // If user was already fetched by globalInit before categories loaded,
-          // populate the form now.
           if (rebaLib.user) {
              rebaLib.profilePage.populateForm(rebaLib.user);
           }
@@ -245,7 +243,6 @@ var rebaLib = {
     },
 
     populateForm: function (user) {
-      // Check if we are actually on the profile page before trying to populate
       if ($("#wf-form-Edit-User-Form").length === 0) {
           return; 
       }
@@ -285,26 +282,27 @@ var rebaLib = {
       }
       
       const $categoriesSelect = $("#user-categories");
-      $categoriesSelect.empty(); 
-      
-      // Use the stored categories
-      if (rebaLib.profilePage.allCategories.length > 0) {
-          rebaLib.profilePage.allCategories.forEach(function (category) {
-            $categoriesSelect.append(
-              $("<option>", {
-                value: category.id,
-                text: category.fieldData.name || "Unnamed Category",
-              })
-            );
-          });
+      if ($categoriesSelect.next('.ms-options-wrap').length === 0) {
+          $categoriesSelect.empty(); 
           
-          $categoriesSelect.val(fieldData["categories"] || []);
-    
-          rebaLib.utils.waitForMultiSelect(function() {
-            $categoriesSelect.multiselect({
-                maxHeight: 200,
-            });
-          });
+          if (rebaLib.profilePage.allCategories.length > 0) {
+              rebaLib.profilePage.allCategories.forEach(function (category) {
+                $categoriesSelect.append(
+                  $("<option>", {
+                    value: category.id,
+                    text: category.fieldData.name || "Unnamed Category",
+                  })
+                );
+              });
+              
+              $categoriesSelect.val(fieldData["categories"] || []);
+        
+              rebaLib.utils.waitForMultiSelect(function() {
+                $categoriesSelect.multiselect({
+                    maxHeight: 200,
+                });
+              });
+          }
       }
     },
 
@@ -314,7 +312,7 @@ var rebaLib = {
       const itemId = $("#wf-form-Edit-User-Form").data("webflow-item-id");
 
       if (!itemId) {
-        rebaLib.utils.showNotification("Cannot save. User Item ID not found.", true);
+        alert("Cannot save. User Item ID not found.");
         return;
       }
 
@@ -353,13 +351,13 @@ var rebaLib = {
 
       rebaLib.api.updateUserProfile(itemId, dataToSave,
         function (response) {
-          rebaLib.utils.showNotification("Profile saved successfully!", false);
+          alert("Profile saved successfully!");
           $button.val("Saved!").prop("disabled", false);
           setTimeout(() => { $button.val(originalButtonText); }, 2000);
           $("#profile-pic-preview").data("new-image-url", null);
         },
         function (error) {
-          rebaLib.utils.showNotification("Save failed. Please try again.", true);
+          alert("Save failed. Please try again.");
           console.error("Save error:", error);
           $button.val(originalButtonText).prop("disabled", false);
         }
@@ -380,20 +378,17 @@ var rebaLib = {
 
           const reader = new FileReader();
           reader.onload = function(event) {
-              $preview.attr("src", event.target.result);
+              $preview.attr("src", event.target.result).removeAttr("srcset");
           }
           reader.readAsDataURL(file);
 
-          rebaLib.utils.showNotification("Uploading image...", false);
-
           rebaLib.api.uploadFile(file, 
               function(asset) {
-                  rebaLib.utils.showNotification("Image uploaded. Click 'Save' to apply.", false);
-                  $preview.attr("src", asset.url);
+                  $preview.attr("src", asset.url).removeAttr("srcset");
                   $preview.data("new-image-url", asset.url);
               },
               function(error) {
-                  rebaLib.utils.showNotification("Image upload failed.", true);
+                  alert("Image upload failed, please try again. Please make sure file is valid and <4MB.");
                   console.error("Upload error:", error);
               }
           );
@@ -439,7 +434,6 @@ var rebaLib = {
     createWebflowUser: function(formData, type, userTypes) {
         return new Promise((resolve, reject) => {
             const fullName = formData.name;
-            
             
             const fields = {
                 "name": fullName,
@@ -589,19 +583,11 @@ var rebaLib = {
         method: "GET",
         success: function (response) {
           if (response.items && response.items.length > 0) {
-            // Store global user data for billing portal usage
             rebaLib.user = response.items[0]; 
             
-            // If we are on the profile page, populate the form
-            // Updated: Call populate only if function exists and we haven't already populated
             if (rebaLib.profilePage && typeof rebaLib.profilePage.populateForm === 'function') {
-               // NOTE: profilePage.init might have already populated if user loaded early.
-               // But re-running populate is safer than missing data.
-               // We rely on the form check inside populateForm to not crash.
                rebaLib.profilePage.populateForm(rebaLib.user);
             }
-          } else {
-            // Handle case where user is not found
           }
         },
         error: function (error) {
@@ -687,7 +673,6 @@ var rebaLib = {
 
   // --- Utility Functions ---
   utils: {
-    // --- RESTORED SLUGIFY FUNCTION ---
     slugify: function(text) {
       return text.toString().toLowerCase()
         .replace(/\s+/g, '-')           
@@ -699,9 +684,8 @@ var rebaLib = {
 
     getMemberSlug: function (callback) {
       let attempts = 0;
-      const maxAttempts = 50; // Wait 5 seconds
+      const maxAttempts = 50; 
       
-      // We look for [data-ms-member='wf-users-slug']
       const check = setInterval(function () {
         const $slugEl = $("[data-ms-member='wf-users-slug']");
         
@@ -710,7 +694,6 @@ var rebaLib = {
           callback($slugEl.text().trim());
         } else if (attempts > maxAttempts) {
           clearInterval(check);
-          // Only warn if on a page where this is critical, or handle gracefully
           console.log("Memberstack slug not found or user not logged in.");
           callback(null);
         }
@@ -719,69 +702,32 @@ var rebaLib = {
     },
 
     showNotification: function (message, isError) {
-      // Remove any existing notification
-      $(".reba-notification").remove();
-
-      const color = isError ? "#E57373" : "#81C784";
-      const $notification = $(
-        '<div class="reba-notification">' + message + "</div>"
-      );
-
-      $notification.css({
-        position: "fixed",
-        top: "0",
-        left: "0",
-        width: "100%",
-        padding: "12px",
-        "background-color": color,
-        color: "white",
-        "text-align": "center",
-        "font-size": "16px",
-        "z-index": "9999",
-        display: "none",
-      });
-
-      $("body").append($notification);
-      $notification.slideDown(300).delay(3000).slideUp(300, function () {
-        $(this).remove();
-      });
+      alert(message);
     },
     
     injectDependencies: function () {
-      // SparkMD5 is required for the new upload function
       if (typeof SparkMD5 === 'undefined') {
-        const scriptTagForSparkMD5 = '<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>';
-        $("head").append(scriptTagForSparkMD5);
+        $("head").append('<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>');
       }
-      
-      // Quill Rich Text Editor
       if (typeof Quill === 'undefined') {
-        const quillCssLink = '<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">';
-        const quillJsScript = '<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>';
-        $("head").append(quillCssLink);
-        $("head").append(quillJsScript);
+        $("head").append('<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">');
+        $("head").append('<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>');
       }
-      
-      // @nobleclem/jquery-multiselect
       if (typeof $.fn.multiselect === 'undefined') {
-        const scriptTagForMultiselect =
-          '<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>';
-        const cssLinkForMultiselect =
-          '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">';
-        $("head").append(scriptTagForMultiselect);
-        $("head").append(cssLinkForMultiselect);
+        $("head").append('<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>');
+        $("head").append('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">');
       }
     },
     
     waitForQuill: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; // Wait 10 seconds
+        const maxAttempts = 100; 
         
         const check = setInterval(function () {
             if (typeof Quill !== 'undefined') {
                 clearInterval(check);
                 callback();
-            } else if (attempts > 100) {
+            } else if (attempts > maxAttempts) {
                 clearInterval(check);
                 console.error("Quill.js failed to load.");
             }
@@ -791,13 +737,13 @@ var rebaLib = {
     
     waitForMultiSelect: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; // Wait 10 seconds
+        const maxAttempts = 100; 
         
         const check = setInterval(function () {
             if (typeof $.fn.multiselect !== 'undefined') {
                 clearInterval(check);
                 callback();
-            } else if (attempts > 100) {
+            } else if (attempts > maxAttempts) {
                 clearInterval(check);
                 console.error("jquery.multiselect.js failed to load.");
             }
@@ -808,28 +754,20 @@ var rebaLib = {
     initRichTextEditor: function (editorId, placeholder, content) {
         const $element = $(`#${editorId}`);
         if (!$element.length) return null;
-
-        // GUARD CLAUSE: Only initialize if it's a textarea.
-        // If it's a DIV, Quill has likely already replaced it.
+        
         if (!$element.is('textarea')) {
             console.warn(`Element #${editorId} is not a textarea. Skipping Quill init to prevent duplicates.`);
-            // Attempt to return existing instance if possible, or just null
             const el = document.getElementById(editorId);
             return typeof Quill !== 'undefined' ? Quill.find(el) : null;
         }
 
-        // Create the new div with the same ID and existing content
         const $editorDiv = $(`<div id="${editorId}">${content}</div>`);
-        
-        // Copy classes from the old textarea to the new div
         $editorDiv.attr('class', $element.attr('class'));
-        
-        // Replace the textarea with the new div
         $element.replaceWith($editorDiv);
 
         const quill = new Quill(`#${editorId}`, {
             modules: {
-              toolbar: [["bold", "italic", "underline"]], // Simple toolbar
+              toolbar: [["bold", "italic", "underline"]], 
             },
             placeholder: placeholder,
             theme: "snow",
@@ -838,30 +776,19 @@ var rebaLib = {
         return quill;
     },
     
-    /**
-     * Cleans Quill's HTML output for saving to Webflow.
-     * @param {string} innerHTML - The innerHTML from quill.root.
-     * @returns {string} Cleaned HTML.
-     */
     cleanQuillHTML: function (innerHTML) {
-      // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
-      // Webflow rich text fields often prefer just <p> tags.
       if (innerHTML === "<p><br></p>") {
         return "";
       }
-      // Remove the cursor span elements from Quill editor innerHTML
       return innerHTML.replace(/<span class="ql-cursor">.*?<\/span>/g, "");
     }
   },
 };
 
 // --- Initializer ---
-// Runs the script based on the current page.
 $(document).ready(function () {
   const path = window.location.pathname;
   
-  // 1. Initialize Billing Portal listeners everywhere
-  //    (This just attaches the click event, logic inside handles user check)
   rebaLib.globalInit();
 
   if (path === "/account/profile") {
