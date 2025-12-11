@@ -8,6 +8,10 @@ const USER_CATEGORIES_COLLECTION_ID = "6782ef034b92192a06f56a1f";
 const USER_TYPES_COLLECTION_ID = "6898242371de0de33b215c88"; 
 const BROKERAGES_COLLECTION_ID = "5d1c4a6720876632e4d52d6f";
 
+// --- USER TYPE IDs ---
+const AGENT_TYPE_ID = "6898242a265d27ca0725f430";
+const AFFILIATE_TYPE_ID = "689824336c6c8212033ff4bb";
+
 // --- CONFIGURATION FOR NEW ACCOUNTS ---
 const ACCOUNT_CONFIG = {
   agent: {
@@ -39,13 +43,39 @@ var rebaLib = {
           
           // 3. Update 'View Profile' button links
           const profileUrl = `https://www.lajollareba.com/user/${slug}`;
-          // Updates any <a> tag with this ID to point to the public profile
           const $viewProfileBtn = $("#view-profile-btn");
           if ($viewProfileBtn.length) {
               $viewProfileBtn.attr("href", profileUrl);
           }
         }
       });
+  },
+  
+  // --- Update Resubscribe Button Logic ---
+  updateResubscribeButton: function(user) {
+      const $btn = $("#reba-subscribe-btn");
+      if ($btn.length === 0 || !user) return;
+
+      const userTypes = user.fieldData['type'] || []; // This is an array of IDs
+      let stripeUrl = "#";
+
+      if (userTypes.includes(AFFILIATE_TYPE_ID)) {
+          stripeUrl = ACCOUNT_CONFIG.affiliate.stripeUrl;
+      } else if (userTypes.includes(AGENT_TYPE_ID)) {
+          stripeUrl = ACCOUNT_CONFIG.agent.stripeUrl;
+      }
+
+      if (stripeUrl !== "#") {
+          // Pre-fill email in Stripe link if available
+          const email = user.fieldData['email'];
+          if (email) {
+              const encodedEmail = encodeURIComponent(email);
+              // Also pass the client reference ID (Webflow Item ID)
+              stripeUrl = `${stripeUrl}?locked_prefilled_email=${encodedEmail}&client_reference_id=${user.id}`;
+          }
+          $btn.attr("href", stripeUrl);
+          console.log("Updated Resubscribe button URL:", stripeUrl);
+      }
   },
 
   // --- Billing Portal Logic ---
@@ -585,6 +615,10 @@ var rebaLib = {
           if (response.items && response.items.length > 0) {
             rebaLib.user = response.items[0]; 
             
+            // --- NEW: Update Resubscribe Button Logic ---
+            // Now that we have the user and their type, we can update the button
+            rebaLib.updateResubscribeButton(rebaLib.user);
+
             if (rebaLib.profilePage && typeof rebaLib.profilePage.populateForm === 'function') {
                rebaLib.profilePage.populateForm(rebaLib.user);
             }
@@ -684,7 +718,7 @@ var rebaLib = {
 
     getMemberSlug: function (callback) {
       let attempts = 0;
-      const maxAttempts = 50; 
+      const maxAttempts = 50; // Wait 5 seconds
       
       const check = setInterval(function () {
         const $slugEl = $("[data-ms-member='wf-users-slug']");
@@ -707,21 +741,32 @@ var rebaLib = {
     
     injectDependencies: function () {
       if (typeof SparkMD5 === 'undefined') {
-        $("head").append('<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>');
+        const scriptTagForSparkMD5 = '<script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>';
+        $("head").append(scriptTagForSparkMD5);
       }
+      
+      // Quill Rich Text Editor
       if (typeof Quill === 'undefined') {
-        $("head").append('<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">');
-        $("head").append('<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>');
+        const quillCssLink = '<link href="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.snow.css" rel="stylesheet">';
+        const quillJsScript = '<script src="https://cdn.jsdelivr.net/npm/quill@2/dist/quill.js"></script>';
+        $("head").append(quillCssLink);
+        $("head").append(quillJsScript);
       }
+      
+      // @nobleclem/jquery-multiselect
       if (typeof $.fn.multiselect === 'undefined') {
-        $("head").append('<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>');
-        $("head").append('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">');
+        const scriptTagForMultiselect =
+          '<script src="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.js"></script>';
+        const cssLinkForMultiselect =
+          '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@nobleclem/jquery-multiselect@2.4.24/jquery.multiselect.min.css">';
+        $("head").append(scriptTagForMultiselect);
+        $("head").append(cssLinkForMultiselect);
       }
     },
     
     waitForQuill: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; 
+        const maxAttempts = 100; // Wait 10 seconds
         
         const check = setInterval(function () {
             if (typeof Quill !== 'undefined') {
@@ -737,7 +782,7 @@ var rebaLib = {
     
     waitForMultiSelect: function(callback) {
         let attempts = 0;
-        const maxAttempts = 100; 
+        const maxAttempts = 100; // Wait 10 seconds
         
         const check = setInterval(function () {
             if (typeof $.fn.multiselect !== 'undefined') {
@@ -755,19 +800,26 @@ var rebaLib = {
         const $element = $(`#${editorId}`);
         if (!$element.length) return null;
         
+        // GUARD CLAUSE: Only initialize if it's a textarea.
+        // If it's a DIV, Quill has likely already replaced it.
         if (!$element.is('textarea')) {
             console.warn(`Element #${editorId} is not a textarea. Skipping Quill init to prevent duplicates.`);
             const el = document.getElementById(editorId);
             return typeof Quill !== 'undefined' ? Quill.find(el) : null;
         }
 
+        // Create the new div with the same ID and existing content
         const $editorDiv = $(`<div id="${editorId}">${content}</div>`);
+        
+        // Copy classes from the old textarea to the new div
         $editorDiv.attr('class', $element.attr('class'));
+        
+        // Replace the textarea with the new div
         $element.replaceWith($editorDiv);
 
         const quill = new Quill(`#${editorId}`, {
             modules: {
-              toolbar: [["bold", "italic", "underline"]], 
+              toolbar: [["bold", "italic", "underline"]], // Simple toolbar
             },
             placeholder: placeholder,
             theme: "snow",
@@ -776,19 +828,30 @@ var rebaLib = {
         return quill;
     },
     
+    /**
+     * Cleans Quill's HTML output for saving to Webflow.
+     * @param {string} innerHTML - The innerHTML from quill.root.
+     * @returns {string} Cleaned HTML.
+     */
     cleanQuillHTML: function (innerHTML) {
+      // A simple cleaner. Quill sometimes adds <p><br></p> for empty lines.
+      // Webflow rich text fields often prefer just <p> tags.
       if (innerHTML === "<p><br></p>") {
         return "";
       }
+      // Remove the cursor span elements from Quill editor innerHTML
       return innerHTML.replace(/<span class="ql-cursor">.*?<\/span>/g, "");
     }
   },
 };
 
 // --- Initializer ---
+// Runs the script based on the current page.
 $(document).ready(function () {
   const path = window.location.pathname;
   
+  // 1. Initialize Billing Portal listeners everywhere
+  //    (This just attaches the click event, logic inside handles user check)
   rebaLib.globalInit();
 
   if (path === "/account/profile") {
