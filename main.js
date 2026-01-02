@@ -22,7 +22,7 @@ const ACCOUNT_CONFIG = {
   },
   affiliate: {
     // stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00",  // gabe's 
-    stripeUrl: "https://buy.stripe.com/dRmbIUbMJ3cscHv5dt2B201" // reba's https://buy.stripe.com/dRmbIUbMJ3cscHv5dt2B201
+    stripeUrl: "https://buy.stripe.com/dRmbIUbMJ3cscHv5dt2B201", // reba's https://buy.stripe.com/dRmbIUbMJ3cscHv5dt2B201
     memberstackPlanId: "pln_reba-affiliate-yrb0wq6",
     redirectUrl: "https://www.lajollareba.com/account/dashboard"
   },
