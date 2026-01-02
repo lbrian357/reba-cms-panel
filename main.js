@@ -15,13 +15,21 @@ const AFFILIATE_TYPE_ID = "689824336c6c8212033ff4bb";
 // --- CONFIGURATION FOR NEW ACCOUNTS ---
 const ACCOUNT_CONFIG = {
   agent: {
-    stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00",
+    // stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00", // gabe's buy link
+    stripeUrl: "https://buy.stripe.com/6oUdR28Ax00g6j79tJ2B200", // reba's buy link
     memberstackPlanId: "pln_reba-agent-yrb0wq6", 
     redirectUrl: "https://www.lajollareba.com/account/dashboard" 
   },
   affiliate: {
-    stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00", 
+    // stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00",  // gabe's 
+    stripeUrl: "https://buy.stripe.com/dRmbIUbMJ3cscHv5dt2B201" // reba's https://buy.stripe.com/dRmbIUbMJ3cscHv5dt2B201
     memberstackPlanId: "pln_reba-affiliate-yrb0wq6",
+    redirectUrl: "https://www.lajollareba.com/account/dashboard"
+  },
+  agentWithOffice: {
+    // stripeUrl: "https://buy.stripe.com/dRm5kDbRHbxxe2c06adnW00",  // gabe's
+    stripeUrl: "https://buy.stripe.com/4gMcMYcQN4gw0YN9tJ2B202",  // reba's https://buy.stripe.com/4gMcMYcQN4gw0YN9tJ2B202
+    memberstackPlanId: "pln_reba-agent-office-yrb0wq6",
     redirectUrl: "https://www.lajollareba.com/account/dashboard"
   }
 };
