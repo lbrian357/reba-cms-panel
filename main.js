@@ -224,6 +224,25 @@ var rebaLib = {
         const member = await rebaLib.api.createMemberstackMember(formData, webflowUser.slug, this.type);
         console.log("Memberstack Member Created:", member);
 
+        console.log("Updating webflow user with Memberstack ID...");
+        await new Promise((resolve, reject) => {
+            rebaLib.api.updateUserProfile(webflowUser.id,
+              {
+                fieldData: {
+                  "memberstack-id": member.id
+                }
+              },
+              function(response) {
+                console.log("Webflow user updated with Memberstack ID.");
+                resolve();
+              },
+              function(error) {
+                console.error("Error updating Webflow user with Memberstack ID:", error);
+                reject(new Error("Failed to update Webflow user with Memberstack ID."));
+              }
+            );
+        });
+
         const stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
         const encodedEmail = encodeURIComponent(formData.email);
         const clientRefId = webflowUser.id; 
