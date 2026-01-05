@@ -229,7 +229,7 @@ var rebaLib = {
             rebaLib.api.updateUserProfile(webflowUser.id,
               {
                 fieldData: {
-                  "memberstack-id": member.id
+                  "memberstack-id": member.member.id
                 }
               },
               function(response) {
