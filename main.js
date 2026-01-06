@@ -65,25 +65,62 @@ var rebaLib = {
       if ($btn.length === 0 || !user) return;
 
       const userTypes = user.fieldData['type'] || []; // This is an array of IDs
-      let stripeUrl = "#";
+      let productType = null;
 
+      // 1. Determine the product type based on the User Type ID
       if (userTypes.includes(AFFILIATE_TYPE_ID)) {
-          stripeUrl = ACCOUNT_CONFIG.affiliate.stripeUrl;
+          productType = 'affiliate';
       } else if (userTypes.includes(AGENT_TYPE_ID)) {
-          stripeUrl = ACCOUNT_CONFIG.agent.stripeUrl;
+          productType = 'agent';
       }
 
-      if (stripeUrl !== "#") {
-          // Pre-fill email in Stripe link if available
-          const email = user.fieldData['email'];
-          if (email) {
-              const encodedEmail = encodeURIComponent(email);
-              // Also pass the client reference ID (Webflow Item ID)
-              stripeUrl = `${stripeUrl}?locked_prefilled_email=${encodedEmail}&client_reference_id=${user.id}`;
+      // If we couldn't determine a type, do nothing
+      if (!productType) return;
+
+      console.log(`Configuring resubscribe button for: ${productType}`);
+
+      // 2. Set href to # so it doesn't navigate automatically
+      $btn.attr("href", "#");
+
+      // 3. Remove any previous click handlers to prevent duplicates, then add the new one
+      $btn.off("click").on("click", function(e) {
+          e.preventDefault();
+
+          const customerId = user.fieldData['stripe-customer-id'];
+
+          if (!customerId) {
+              alert("We could not find your billing profile. Please contact support.");
+              return;
           }
-          $btn.attr("href", stripeUrl);
-          console.log("Updated Resubscribe button URL:", stripeUrl);
-      }
+
+          // UI: Show loading state
+          const originalText = $btn.text();
+          $btn.text("Loading Checkout...").css("pointer-events", "none");
+
+          // 4. Call your Serverless Endpoint
+          $.ajax({
+              url: `${BILLING_PROXY_URL}/checkout/session`, // Uses the const defined at top of file
+              method: "POST",
+              contentType: "application/json",
+              data: JSON.stringify({
+                  type: productType,
+                  customerId: customerId
+              }),
+              success: function(response) {
+                  if (response.url) {
+                      window.location.href = response.url; // Redirect to Stripe
+                  } else {
+                      alert("Unable to create checkout session. Please try again.");
+                      $btn.text(originalText).css("pointer-events", "auto");
+                  }
+              },
+              error: function(err) {
+                  console.error("Checkout Error:", err);
+                  alert("An error occurred connecting to the checkout server.");
+                  $btn.text(originalText).css("pointer-events", "auto");
+              }
+          });
+      });
   },
 
   // --- Billing Portal Logic ---
