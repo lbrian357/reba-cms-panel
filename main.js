@@ -256,7 +256,7 @@ var rebaLib = {
           password: $("#password").val(),
           brokerage: $("#brokerage").val() || "", 
           category: $("#category").val() || "",
-          officeName: $("#Office-Name").val().trim() || ""
+          officeName: $("#Office-Name").val() || ""
         };
 
         console.log("Creating Webflow User...");
