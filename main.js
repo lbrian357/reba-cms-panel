@@ -229,10 +229,15 @@ var rebaLib = {
       const $form = $(formElement);
       const $submitBtn = $form.find('input[type="submit"]');
       const originalBtnText = $submitBtn.val();
+      const isAgentWithOffice = this.type === 'agentWithOffice';
       
       if (!formElement.checkValidity()) {
         formElement.reportValidity();
         return; 
+      }
+
+      if (isAgentWithOffice) {
+        this.type = 'agent'; // For Webflow CMS purposes, treat "Agent with Office" as "Agent" type, but we'll handle the office logic separately
       }
       
       if (!this.userTypes || this.userTypes.length === 0) {
@@ -250,7 +255,8 @@ var rebaLib = {
           phone: $("#phone").val().trim(),
           password: $("#password").val(),
           brokerage: $("#brokerage").val() || "", 
-          category: $("#category").val() || ""    
+          category: $("#category").val() || "",
+          officeName: $("#Office-Name").val().trim() || ""
         };
 
         console.log("Creating Webflow User...");
@@ -280,7 +286,10 @@ var rebaLib = {
             );
         });
 
-        const stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
+        let stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
+        if (isAgentWithOffice) {
+          stripeBaseUrl = ACCOUNT_CONFIG['agentWithOffice'].stripeUrl;
+        }
         const encodedEmail = encodeURIComponent(formData.email);
         const clientRefId = webflowUser.id; 
         const finalStripeUrl = `${stripeBaseUrl}?locked_prefilled_email=${encodedEmail}&client_reference_id=${clientRefId}`; 
@@ -552,7 +561,11 @@ var rebaLib = {
 
             if (type === 'agent' && formData.brokerage) {
                 fields['brokerage'] = formData.brokerage; 
-            } 
+            }
+
+            if (type === 'agent' && formData.officeName) {
+                fields['new-office-name'] = formData.officeName;
+            }
             
             if (type === 'affiliate' && formData.category) {
                 fields['categories'] = [formData.category]; 
@@ -924,5 +937,7 @@ $(document).ready(function () {
     rebaLib.createAccountPage.init('agent');
   } else if (path === "/create-affiliate-account") {
     rebaLib.createAccountPage.init('affiliate');
+  } else if (path === "/create-office-account") {
+    rebaLib.createAccountPage.init('agentWithOffice');
   }
 });
