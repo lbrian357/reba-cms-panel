@@ -237,7 +237,7 @@ var rebaLib = {
       }
 
       if (isAgentWithOffice) {
-        this.type = 'agent'; // For Webflow CMS purposes, treat "Agent with Office" as "Agent" type, but we'll handle the office logic separately
+        this.type = 'agent'; 
       }
       
       if (!this.userTypes || this.userTypes.length === 0) {
@@ -259,33 +259,33 @@ var rebaLib = {
           officeName: $("#Office-Name").val() || ""
         };
 
-        console.log("Creating Webflow User...");
-        const webflowUser = await rebaLib.api.createWebflowUser(formData, this.type, this.userTypes);
-        console.log("Webflow User Created:", webflowUser);
-
+        // 1. Try creating the Memberstack account FIRST (The Gatekeeper)
         console.log("Creating Memberstack Member...");
-        const member = await rebaLib.api.createMemberstackMember(formData, webflowUser.slug, this.type);
+        const member = await rebaLib.api.createMemberstackMember(formData, this.type);
         console.log("Memberstack Member Created:", member);
 
-        console.log("Updating webflow user with Memberstack ID...");
-        await new Promise((resolve, reject) => {
-            rebaLib.api.updateUserProfile(webflowUser.id,
-              {
-                fieldData: {
-                  "memberstack-id": member.member.id
-                }
-              },
-              function(response) {
-                console.log("Webflow user updated with Memberstack ID.");
-                resolve();
-              },
-              function(error) {
-                console.error("Error updating Webflow user with Memberstack ID:", error);
-                reject(new Error("Failed to update Webflow user with Memberstack ID."));
-              }
-            );
-        });
+        // 2. Create the Webflow CMS item (Webflow auto-generates the simple, unique slug!)
+        console.log("Creating Webflow User...");
+        const webflowUser = await rebaLib.api.createWebflowUser(formData, this.type, this.userTypes);
+        console.log(`Webflow User Created with slug: ${webflowUser.slug}`);
 
+        // 3. Link them together simultaneously
+        console.log("Linking Webflow and Memberstack accounts...");
+        await Promise.all([
+            // Task A: Send the Memberstack ID to Webflow
+            new Promise((resolve) => {
+                rebaLib.api.updateUserProfile(webflowUser.id, 
+                    { fieldData: { "memberstack-id": member.member.id } }, 
+                    resolve, resolve // resolve even on error so we don't block checkout
+                );
+            }),
+            // Task B: Send the newly generated Webflow Slug to Memberstack
+            window.$memberstackDom.updateMember({
+                customFields: { "wf-users-slug": webflowUser.slug }
+            })
+        ]);
+
+        // 4. Send them to Stripe
         let stripeBaseUrl = ACCOUNT_CONFIG[this.type].stripeUrl;
         if (isAgentWithOffice) {
           stripeBaseUrl = ACCOUNT_CONFIG['agentWithOffice'].stripeUrl;
@@ -303,16 +303,17 @@ var rebaLib = {
         if (typeof error === 'string') {
             errorMsg = error;
         } else if (error.message) {
-             if (error.message.includes("email")) {
-                errorMsg = "This email is already registered.";
+             if (error.message.includes("email") || error.message.includes("already")) {
+                errorMsg = "This email is already registered. Please log in instead.";
              } else {
                 errorMsg += " " + error.message;
              }
         }
         alert(errorMsg);
         $submitBtn.val(originalBtnText).prop("disabled", false);
+        throw error; 
       }
-    }
+    },
   },
 
   // --- Profile Page Logic ---
@@ -540,7 +541,6 @@ var rebaLib = {
             
             const fields = {
                 "name": fullName,
-                "slug": rebaLib.utils.slugify(fullName), 
                 "email": formData.email,
                 "phone": formData.phone,
                 "_archived": false,
@@ -628,7 +628,6 @@ var rebaLib = {
                     email: formData.email,
                     password: formData.password,
                     customFields: {
-                        "wf-users-slug": webflowSlug, 
                         "account-type": type
                     },
                 };
