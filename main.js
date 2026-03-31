@@ -237,7 +237,7 @@ var rebaLib = {
       }
 
       if (isAgentWithOffice) {
-        this.type = 'agent'; 
+        this.type = 'agent'; // For Webflow CMS purposes, treat "Agent with Office" as "Agent" type, but we'll handle the office logic separately
       }
       
       if (!this.userTypes || this.userTypes.length === 0) {
